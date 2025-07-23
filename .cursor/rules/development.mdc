@@ -28,3 +28,13 @@ sqlite, fastapi, and whatever is needed to download vids
 ## testing
 
 no unit testing unless the users requests it. simple integration testing is good and should cover most of the codebase.
+
+## docs
+
+avoid in documentation:
+
+- "why we chose x over y" sections
+- decision justifications
+- comparisons with alternatives
+- conversation context
+- explanatory rationale
