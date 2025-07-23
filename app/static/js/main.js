@@ -8,6 +8,7 @@ class YouHoard {
     init() {
         this.setupEventListeners();
         this.setupActiveNavigation();
+        this.setupEmojiAnimation();
     }
 
     setupEventListeners() {
@@ -66,6 +67,63 @@ class YouHoard {
                 link.classList.add('active');
             }
         });
+    }
+
+    // Dumpster Emoji Animation Setup
+    setupEmojiAnimation() {
+        const navLogo = document.querySelector('.nav-logo');
+        if (!navLogo) return;
+
+        let animationCooldown = false;
+        const cooldownDuration = 1000; // 1 second cooldown
+
+        navLogo.addEventListener('mouseenter', () => {
+            if (!animationCooldown) {
+                this.createEmojiExplosion(navLogo);
+                animationCooldown = true;
+                setTimeout(() => {
+                    animationCooldown = false;
+                }, cooldownDuration);
+            }
+        });
+    }
+
+    // Create Flying Dumpster Emojis
+    createEmojiExplosion(element) {
+        const dumpsterEmojis = ['🗑️', '🪣', '♻️', '🚮', '🗂️'];
+        const numEmojis = 8;
+        const rect = element.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+
+        for (let i = 0; i < numEmojis; i++) {
+            const emoji = document.createElement('div');
+            emoji.className = 'emoji-particle';
+            emoji.textContent = dumpsterEmojis[Math.floor(Math.random() * dumpsterEmojis.length)];
+            
+            // Position at the center of the logo
+            emoji.style.left = centerX + 'px';
+            emoji.style.top = centerY + 'px';
+            
+            // Random direction and distance
+            const angle = (i / numEmojis) * 2 * Math.PI + (Math.random() - 0.5) * 0.5;
+            const distance = 80 + Math.random() * 40;
+            const randomX = Math.cos(angle) * distance;
+            const randomY = Math.sin(angle) * distance - Math.random() * 30; // Bias upward
+            
+            // Set CSS custom properties for animation
+            emoji.style.setProperty('--random-x', randomX + 'px');
+            emoji.style.setProperty('--random-y', randomY + 'px');
+            
+            document.body.appendChild(emoji);
+            
+            // Remove emoji after animation completes
+            setTimeout(() => {
+                if (emoji.parentNode) {
+                    emoji.parentNode.removeChild(emoji);
+                }
+            }, 2000);
+        }
     }
 
     // Modal Management
