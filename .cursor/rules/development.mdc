@@ -1,0 +1,30 @@
+---
+alwaysApply: true
+---
+# dev rules
+
+## keeping track of things
+
+when large changes are being done, track the tasks, changes, and high level design decisions in a markdown, stored in docs/
+
+always make sure you've checked if there's a relevant doc!
+
+## remembering the design
+
+a succinct but complete DESIGN.md in the project root should always be maintained to reflect the app and serve as a starting point for understanding the codebase
+
+## maintaining a readme
+
+the readme should always be kept up to date with the project. but keep it succinct.
+
+## python uv
+
+this project uses python uv.
+
+## backend
+
+sqlite, fastapi, and whatever is needed to download vids
+
+## testing
+
+no unit testing unless the users requests it. simple integration testing is good and should cover most of the codebase.
