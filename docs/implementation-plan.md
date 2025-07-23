@@ -173,7 +173,7 @@ Create a clean, functional web interface for all features.
    - ✅ Cookie-based authentication working
    - ✅ Complete video management (browse, search, filter, details, download, delete)
    - ✅ Full channel management with subscription integration
-   - ✅ Comprehensive subscription system with scheduling
+   - ⚠️ Subscription system with scheduling (playlist subscriptions non-functional)
    - ⚠️ Download queue monitoring with progress tracking (pause/cancel of active downloads incomplete)
    - ✅ Settings and configuration management
    - ✅ Data export functionality
@@ -208,7 +208,7 @@ Create a clean, functional web interface for all features.
 - Browse and search videos with filters and pagination
 - View detailed video information and manage downloads
 - Manage channels with subscription creation
-- Create and manage automated subscriptions with scheduling
+- ⚠️ Create and manage automated subscriptions with scheduling (playlist subscriptions broken)
 - Monitor download queue with real-time progress tracking
 - Configure application settings and export data
 - Navigate seamlessly between all features
@@ -239,50 +239,63 @@ Add quality-of-life features and optimizations.
    - Add download process tracking (PIDs or async task references)
    - Test pause/resume/cancel functionality with actual downloads
 
-2. **User Management** ✅ **WORKING**
+2. **Subscription Management** 🔄 **HIGH PRIORITY**
+   - ✅ Channel subscriptions working (creation, editing, scheduling)
+   - ✅ Backend API supports both channel and playlist subscription types
+   - ❌ **Critical Gap**: Playlist subscriptions cannot be created from UI
+   - ✅ Subscription monitoring and status management working
+   - ✅ Automated checking and scheduling functional
+   
+   **Specific TODOs to Complete Subscription Management:**
+   - Fix playlist URL detection and handling in subscription creation UI
+   - Test playlist subscription creation end-to-end
+   - Verify playlist content discovery and video extraction
+   - Ensure playlist subscription scheduling works correctly
+
+3. **User Management** ✅ **WORKING**
    - ✅ Initial user setup endpoint (`/api/auth/setup`) - TESTED
    - ⚠️ User management interface - placeholder
    - ⚠️ Password change functionality - not implemented
 
-3. **Core Frontend Pages** ⚠️ **MOSTLY COMPLETED**
+4. **Core Frontend Pages** ⚠️ **MOSTLY COMPLETED**
    - ✅ **Videos Page**: Grid view, search, filters, video details, download controls
    - ✅ **Channels Page**: Channel cards, statistics, subscription management
-   - ✅ **Subscriptions Page**: Create/edit subscriptions, monitoring, scheduling controls
+   - ⚠️ **Subscriptions Page**: Create/edit subscriptions, monitoring, scheduling (playlist subscriptions broken)
    - ⚠️ **Downloads Page**: Queue management, progress tracking, auto-refresh (UI complete, backend gaps)
    - ✅ **Settings Page**: Configuration options, system info, data export
 
-4. **Advanced Frontend Features** 🔄 **LOWER PRIORITY**
+5. **Advanced Frontend Features** 🔄 **LOWER PRIORITY**
    - **Enhanced Videos**: Bulk operations, video player, advanced search
    - **Enhanced Channels**: Subscription management, detailed statistics  
    - **Enhanced Subscriptions**: Scheduling UI, automated monitoring
    - **Enhanced Downloads**: Real-time progress bars, background updates
 
-5. **Media Enhancement Features**
+6. **Media Enhancement Features**
    - **Video Thumbnails**: Extract and generate high-quality thumbnails from downloaded videos
    - **Channel Profile Pictures**: Download and display channel avatars/profile pictures
    - **Thumbnail Fallbacks**: Generate custom thumbnails for videos without previews
    - **Image Optimization**: Compress and optimize thumbnail storage
    - **Preview Generation**: Create video preview clips or GIF previews
 
-6. **Tagging System**
+7. **Tagging System**
    - Implement tag CRUD endpoints (backend exists)
    - Video and channel tagging UI
    - Tag-based filtering in UI
    - Bulk tagging operations
 
-7. **Search & Filtering**
+8. **Search & Filtering**
    - Full-text search implementation
    - Advanced filters (date, duration, quality)
    - Saved search queries
    - Sort options
 
-8. **Settings Management**
+9. **Settings Management**
    - Settings page UI
    - Storage path configuration
    - Default preferences
    - Cleanup policies
 
-9. **Additional Features**
+10. **Additional Features**
    - Export functionality (to CSV/JSON)
    - Bulk operations (delete, re-download)
    - Storage usage analytics
