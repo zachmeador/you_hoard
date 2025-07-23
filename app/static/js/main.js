@@ -299,6 +299,21 @@ class YouHoard {
         
         return this.formatDate(dateString);
     }
+
+    // Escape HTML to prevent XSS
+    escapeHtml(text) {
+        if (!text) return '';
+        
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        
+        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
 }
 
 // Initialize the application when DOM is loaded

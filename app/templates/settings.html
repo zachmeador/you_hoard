@@ -8,11 +8,803 @@
     <p class="page-subtitle">Configure application preferences and storage</p>
 </div>
 
-<div class="card">
-    <div class="card-body">
-        <div class="loading-placeholder">
-            Settings page coming soon! The backend APIs are ready.
+<!-- Settings Sections -->
+<div class="settings-container">
+    <!-- General Settings -->
+    <div class="settings-section">
+        <div class="section-header">
+            <h2>General Settings</h2>
+            <p>Basic application configuration</p>
+        </div>
+        
+        <div class="settings-group">
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Default Quality</h3>
+                    <p>Default video quality for new downloads</p>
+                </div>
+                <div class="setting-control">
+                    <select id="default-quality" class="setting-select">
+                        <option value="best">Best Available</option>
+                        <option value="1080p">1080p</option>
+                        <option value="720p">720p</option>
+                        <option value="480p">480p</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Auto-download Subscriptions</h3>
+                    <p>Automatically download new videos from subscriptions</p>
+                </div>
+                <div class="setting-control">
+                    <label class="toggle">
+                        <input type="checkbox" id="auto-download-subscriptions">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Download Comments</h3>
+                    <p>Download comments by default for new videos</p>
+                </div>
+                <div class="setting-control">
+                    <label class="toggle">
+                        <input type="checkbox" id="default-download-comments">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Storage Settings -->
+    <div class="settings-section">
+        <div class="section-header">
+            <h2>Storage Settings</h2>
+            <p>Manage storage location and cleanup policies</p>
+        </div>
+        
+        <div class="settings-group">
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Storage Path</h3>
+                    <p>Location where videos and metadata are stored</p>
+                </div>
+                <div class="setting-control">
+                    <div class="path-input-group">
+                        <input type="text" id="storage-path" class="setting-input" readonly>
+                        <button class="btn btn-secondary btn-sm" id="browse-storage-path">Browse</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Storage Usage</h3>
+                    <p>Current storage usage statistics</p>
+                </div>
+                <div class="setting-control">
+                    <div class="storage-stats">
+                        <div class="storage-info">
+                            <span class="storage-used" id="storage-used">Loading...</span>
+                            <span class="storage-total" id="storage-total"></span>
+                        </div>
+                        <div class="storage-bar">
+                            <div class="storage-fill" id="storage-fill" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Auto Cleanup</h3>
+                    <p>Automatically clean up failed downloads and temporary files</p>
+                </div>
+                <div class="setting-control">
+                    <label class="toggle">
+                        <input type="checkbox" id="auto-cleanup" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Download Settings -->
+    <div class="settings-section">
+        <div class="section-header">
+            <h2>Download Settings</h2>
+            <p>Configure download behavior and performance</p>
+        </div>
+        
+        <div class="settings-group">
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Concurrent Downloads</h3>
+                    <p>Maximum number of simultaneous downloads</p>
+                </div>
+                <div class="setting-control">
+                    <select id="concurrent-downloads" class="setting-select">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Retry Failed Downloads</h3>
+                    <p>Number of times to retry failed downloads</p>
+                </div>
+                <div class="setting-control">
+                    <select id="retry-attempts" class="setting-select">
+                        <option value="0">No retries</option>
+                        <option value="1">1 retry</option>
+                        <option value="2">2 retries</option>
+                        <option value="3">3 retries</option>
+                        <option value="5">5 retries</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Rate Limiting</h3>
+                    <p>Limit download speed to avoid overwhelming the connection</p>
+                </div>
+                <div class="setting-control">
+                    <select id="rate-limit" class="setting-select">
+                        <option value="0">No limit</option>
+                        <option value="1024">1 MB/s</option>
+                        <option value="5120">5 MB/s</option>
+                        <option value="10240">10 MB/s</option>
+                        <option value="20480">20 MB/s</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- System Information -->
+    <div class="settings-section">
+        <div class="section-header">
+            <h2>System Information</h2>
+            <p>Application and system details</p>
+        </div>
+        
+        <div class="settings-group">
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Application Version</div>
+                    <div class="info-value" id="app-version">1.0.0</div>
+                </div>
+                
+                <div class="info-item">
+                    <div class="info-label">Database Status</div>
+                    <div class="info-value status-indicator" id="db-status">
+                        <span class="status-dot status-good"></span>
+                        Connected
+                    </div>
+                </div>
+                
+                <div class="info-item">
+                    <div class="info-label">Scheduler Status</div>
+                    <div class="info-value status-indicator" id="scheduler-status">
+                        <span class="status-dot" id="scheduler-dot"></span>
+                        <span id="scheduler-text">Loading...</span>
+                    </div>
+                </div>
+                
+                <div class="info-item">
+                    <div class="info-label">Total Videos</div>
+                    <div class="info-value" id="total-videos-count">-</div>
+                </div>
+                
+                <div class="info-item">
+                    <div class="info-label">Total Channels</div>
+                    <div class="info-value" id="total-channels-count">-</div>
+                </div>
+                
+                <div class="info-item">
+                    <div class="info-label">Active Subscriptions</div>
+                    <div class="info-value" id="active-subscriptions-count">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Actions -->
+    <div class="settings-section">
+        <div class="section-header">
+            <h2>Actions</h2>
+            <p>Maintenance and administrative actions</p>
+        </div>
+        
+        <div class="settings-group">
+            <div class="action-buttons">
+                <button class="btn btn-primary" id="save-settings">Save Settings</button>
+                <button class="btn btn-secondary" id="refresh-stats">Refresh Stats</button>
+                <button class="btn btn-warning" id="cleanup-failed">Clean Failed Downloads</button>
+                <button class="btn btn-danger" id="export-data">Export Data</button>
+            </div>
         </div>
     </div>
 </div>
+
+<style>
+.settings-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+}
+
+.settings-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.section-header {
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-hover);
+}
+
+.section-header h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: var(--space-1);
+    color: var(--primary);
+}
+
+.section-header p {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.settings-group {
+    padding: var(--space-4);
+}
+
+.setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.setting-item:last-child {
+    border-bottom: none;
+}
+
+.setting-info {
+    flex: 1;
+    margin-right: var(--space-4);
+}
+
+.setting-info h3 {
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: var(--space-1);
+}
+
+.setting-info p {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.setting-control {
+    min-width: 200px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.setting-select, .setting-input {
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.875rem;
+}
+
+.setting-select:focus, .setting-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.path-input-group {
+    display: flex;
+    gap: var(--space-2);
+    width: 100%;
+}
+
+.path-input-group .setting-input {
+    flex: 1;
+}
+
+.toggle {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+.toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--border);
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.toggle input:checked + .toggle-slider {
+    background-color: var(--primary);
+}
+
+.toggle input:checked + .toggle-slider:before {
+    transform: translateX(26px);
+}
+
+.storage-stats {
+    width: 100%;
+}
+
+.storage-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-2);
+    font-size: 0.875rem;
+}
+
+.storage-used {
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.storage-total {
+    color: var(--text-secondary);
+}
+
+.storage-bar {
+    height: 8px;
+    background: var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.storage-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--terminal-green));
+    border-radius: var(--radius-sm);
+    transition: width 0.3s ease;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--space-4);
+}
+
+.info-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.info-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-weight: 500;
+}
+
+.info-value {
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.status-good {
+    background: var(--success);
+}
+
+.status-warning {
+    background: var(--terminal-amber);
+}
+
+.status-error {
+    background: var(--error);
+}
+
+.action-buttons {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+    .setting-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-2);
+    }
+    
+    .setting-info {
+        margin-right: 0;
+    }
+    
+    .setting-control {
+        min-width: unset;
+        width: 100%;
+        justify-content: flex-start;
+    }
+    
+    .info-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .action-buttons {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+class SettingsPage {
+    constructor() {
+        this.settings = {
+            defaultQuality: 'best',
+            autoDownloadSubscriptions: false,
+            defaultDownloadComments: false,
+            concurrentDownloads: 2,
+            retryAttempts: 3,
+            rateLimit: 0,
+            autoCleanup: true,
+            storagePath: './storage'
+        };
+        
+        this.init();
+    }
+    
+    async init() {
+        this.setupEventListeners();
+        await this.loadSettings();
+        await this.loadSystemInfo();
+        await this.loadStorageStats();
+    }
+    
+    setupEventListeners() {
+        // Save settings
+        document.getElementById('save-settings').addEventListener('click', () => {
+            this.saveSettings();
+        });
+        
+        // Refresh stats
+        document.getElementById('refresh-stats').addEventListener('click', () => {
+            this.refreshStats();
+        });
+        
+        // Cleanup failed downloads
+        document.getElementById('cleanup-failed').addEventListener('click', () => {
+            this.cleanupFailedDownloads();
+        });
+        
+        // Export data
+        document.getElementById('export-data').addEventListener('click', () => {
+            this.exportData();
+        });
+        
+        // Browse storage path
+        document.getElementById('browse-storage-path').addEventListener('click', () => {
+            this.browseStoragePath();
+        });
+        
+        // Auto-save on change
+        const inputs = document.querySelectorAll('.setting-select, .toggle input');
+        inputs.forEach(input => {
+            input.addEventListener('change', () => {
+                this.updateSettingFromInput(input);
+            });
+        });
+    }
+    
+    async loadSettings() {
+        try {
+            // Since we don't have a settings API endpoint yet, load from localStorage
+            const savedSettings = localStorage.getItem('youhoard-settings');
+            if (savedSettings) {
+                this.settings = { ...this.settings, ...JSON.parse(savedSettings) };
+            }
+            
+            this.populateSettingsForm();
+            
+        } catch (error) {
+            console.error('Failed to load settings:', error);
+        }
+    }
+    
+    populateSettingsForm() {
+        document.getElementById('default-quality').value = this.settings.defaultQuality;
+        document.getElementById('auto-download-subscriptions').checked = this.settings.autoDownloadSubscriptions;
+        document.getElementById('default-download-comments').checked = this.settings.defaultDownloadComments;
+        document.getElementById('concurrent-downloads').value = this.settings.concurrentDownloads;
+        document.getElementById('retry-attempts').value = this.settings.retryAttempts;
+        document.getElementById('rate-limit').value = this.settings.rateLimit;
+        document.getElementById('auto-cleanup').checked = this.settings.autoCleanup;
+        document.getElementById('storage-path').value = this.settings.storagePath;
+    }
+    
+    updateSettingFromInput(input) {
+        const id = input.id;
+        let value = input.type === 'checkbox' ? input.checked : input.value;
+        
+        // Convert numeric values
+        if (['concurrent-downloads', 'retry-attempts', 'rate-limit'].includes(id)) {
+            value = parseInt(value);
+        }
+        
+        // Map input IDs to setting keys
+        const settingMap = {
+            'default-quality': 'defaultQuality',
+            'auto-download-subscriptions': 'autoDownloadSubscriptions',
+            'default-download-comments': 'defaultDownloadComments',
+            'concurrent-downloads': 'concurrentDownloads',
+            'retry-attempts': 'retryAttempts',
+            'rate-limit': 'rateLimit',
+            'auto-cleanup': 'autoCleanup'
+        };
+        
+        const settingKey = settingMap[id];
+        if (settingKey) {
+            this.settings[settingKey] = value;
+        }
+    }
+    
+    async saveSettings() {
+        try {
+            // Update settings from form
+            this.updateAllSettingsFromForm();
+            
+            // Save to localStorage (in a real app, this would be an API call)
+            localStorage.setItem('youhoard-settings', JSON.stringify(this.settings));
+            
+            youHoard.showToast('Settings saved successfully!', 'success');
+            
+        } catch (error) {
+            console.error('Failed to save settings:', error);
+            youHoard.showToast('Failed to save settings', 'error');
+        }
+    }
+    
+    updateAllSettingsFromForm() {
+        const inputs = document.querySelectorAll('.setting-select, .toggle input, .setting-input');
+        inputs.forEach(input => this.updateSettingFromInput(input));
+    }
+    
+    async loadSystemInfo() {
+        try {
+            // Load system statistics
+            const [videosResponse, channelsResponse, subscriptionsResponse, schedulerResponse] = await Promise.all([
+                youHoard.apiCall('/api/videos?per_page=1'),
+                youHoard.apiCall('/api/channels?per_page=1'),
+                youHoard.apiCall('/api/subscriptions?enabled_only=true&per_page=1'),
+                youHoard.apiCall('/api/subscriptions/scheduler/status')
+            ]);
+            
+            document.getElementById('total-videos-count').textContent = videosResponse.total || 0;
+            document.getElementById('total-channels-count').textContent = channelsResponse.total || 0;
+            document.getElementById('active-subscriptions-count').textContent = subscriptionsResponse.total || 0;
+            
+            // Update scheduler status
+            const schedulerDot = document.getElementById('scheduler-dot');
+            const schedulerText = document.getElementById('scheduler-text');
+            
+            if (schedulerResponse.scheduler_running) {
+                schedulerDot.className = 'status-dot status-good';
+                schedulerText.textContent = 'Running';
+            } else {
+                schedulerDot.className = 'status-dot status-error';
+                schedulerText.textContent = 'Stopped';
+            }
+            
+        } catch (error) {
+            console.error('Failed to load system info:', error);
+        }
+    }
+    
+    async loadStorageStats() {
+        try {
+            // Calculate storage usage from downloaded videos
+            const videosResponse = await youHoard.apiCall('/api/videos?per_page=1000');
+            
+            let totalSize = 0;
+            let downloadedVideos = 0;
+            
+            if (videosResponse.videos) {
+                videosResponse.videos.forEach(video => {
+                    if (video.file_size && video.download_status === 'completed') {
+                        totalSize += video.file_size;
+                        downloadedVideos++;
+                    }
+                });
+            }
+            
+            const storageUsed = document.getElementById('storage-used');
+            const storageTotal = document.getElementById('storage-total');
+            const storageFill = document.getElementById('storage-fill');
+            
+            storageUsed.textContent = this.formatFileSize(totalSize);
+            storageTotal.textContent = `${downloadedVideos} files`;
+            
+            // Assume 1TB total space for demo (in a real app, this would come from the filesystem)
+            const totalSpace = 1024 * 1024 * 1024 * 1024; // 1TB
+            const usagePercent = (totalSize / totalSpace) * 100;
+            
+            storageFill.style.width = `${Math.min(usagePercent, 100)}%`;
+            
+        } catch (error) {
+            console.error('Failed to load storage stats:', error);
+            document.getElementById('storage-used').textContent = 'Error loading';
+        }
+    }
+    
+    async refreshStats() {
+        const refreshBtn = document.getElementById('refresh-stats');
+        const originalText = refreshBtn.textContent;
+        
+        refreshBtn.textContent = 'Refreshing...';
+        refreshBtn.disabled = true;
+        
+        try {
+            await this.loadSystemInfo();
+            await this.loadStorageStats();
+            youHoard.showToast('Stats refreshed', 'success');
+        } catch (error) {
+            youHoard.showToast('Failed to refresh stats', 'error');
+        } finally {
+            refreshBtn.textContent = originalText;
+            refreshBtn.disabled = false;
+        }
+    }
+    
+    async cleanupFailedDownloads() {
+        if (!confirm('This will remove all failed downloads from the queue. Continue?')) {
+            return;
+        }
+        
+        try {
+            // Get all failed downloads and remove them
+            const response = await youHoard.apiCall('/api/downloads?status=failed');
+            
+            if (response.downloads && response.downloads.length > 0) {
+                let cleaned = 0;
+                
+                for (const download of response.downloads) {
+                    try {
+                        await youHoard.apiCall(`/api/downloads/${download.id}`, { method: 'DELETE' });
+                        cleaned++;
+                    } catch (error) {
+                        console.error(`Failed to delete download ${download.id}:`, error);
+                    }
+                }
+                
+                youHoard.showToast(`Cleaned up ${cleaned} failed downloads`, 'success');
+            } else {
+                youHoard.showToast('No failed downloads to clean up', 'info');
+            }
+            
+        } catch (error) {
+            console.error('Failed to cleanup failed downloads:', error);
+            youHoard.showToast('Failed to cleanup failed downloads', 'error');
+        }
+    }
+    
+    async exportData() {
+        try {
+            const [videosResponse, channelsResponse, subscriptionsResponse] = await Promise.all([
+                youHoard.apiCall('/api/videos?per_page=1000'),
+                youHoard.apiCall('/api/channels?per_page=1000'),
+                youHoard.apiCall('/api/subscriptions?per_page=1000')
+            ]);
+            
+            const exportData = {
+                exported_at: new Date().toISOString(),
+                settings: this.settings,
+                videos: videosResponse.videos || [],
+                channels: channelsResponse.channels || [],
+                subscriptions: subscriptionsResponse.subscriptions || []
+            };
+            
+            const dataStr = JSON.stringify(exportData, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(dataBlob);
+            link.download = `youhoard-export-${new Date().toISOString().split('T')[0]}.json`;
+            link.click();
+            
+            youHoard.showToast('Data exported successfully', 'success');
+            
+        } catch (error) {
+            console.error('Failed to export data:', error);
+            youHoard.showToast('Failed to export data', 'error');
+        }
+    }
+    
+    browseStoragePath() {
+        // In a real electron app, this would open a directory picker
+        // For web version, just show a message
+        youHoard.showToast('Directory picker not available in web version', 'info');
+    }
+    
+    formatFileSize(bytes) {
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let size = bytes;
+        let unitIndex = 0;
+        
+        while (size >= 1024 && unitIndex < units.length - 1) {
+            size /= 1024;
+            unitIndex++;
+        }
+        
+        return `${size.toFixed(1)} ${units[unitIndex]}`;
+    }
+}
+
+// Initialize when page loads
+let settingsPage;
+document.addEventListener('DOMContentLoaded', () => {
+    settingsPage = new SettingsPage();
+});
+</script>
 {% endblock %} 

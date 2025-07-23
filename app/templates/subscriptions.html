@@ -8,11 +8,969 @@
     <p class="page-subtitle">Manage your YouTube subscriptions and automated downloading</p>
 </div>
 
-<div class="card">
+<!-- Stats Overview -->
+<div class="stats-grid mb-6">
+    <div class="stat-card">
+        <div class="stat-value" id="total-subscriptions">-</div>
+        <div class="stat-label">Total Subscriptions</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="active-subscriptions">-</div>
+        <div class="stat-label">Active</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="scheduled-jobs">-</div>
+        <div class="stat-label">Scheduled Jobs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="last-check">-</div>
+        <div class="stat-label">Last Check</div>
+    </div>
+</div>
+
+<!-- Controls -->
+<div class="card mb-6">
     <div class="card-body">
-        <div class="loading-placeholder">
-            Subscriptions page coming soon! The backend APIs are ready.
+        <div class="subscription-controls">
+            <div class="filter-group">
+                <select id="status-filter" class="filter-select">
+                    <option value="">All Subscriptions</option>
+                    <option value="enabled">Active</option>
+                    <option value="disabled">Paused</option>
+                </select>
+                
+                <select id="type-filter" class="filter-select">
+                    <option value="">All Types</option>
+                    <option value="channel">Channels</option>
+                    <option value="playlist">Playlists</option>
+                </select>
+                
+                <button id="refresh-subscriptions" class="btn btn-primary">
+                    <span class="refresh-icon">⟳</span> Refresh
+                </button>
+            </div>
+            
+            <div class="action-group">
+                <button id="add-subscription" class="btn btn-primary">+ Add Subscription</button>
+                <button id="check-all" class="btn btn-secondary">Check All Now</button>
+            </div>
         </div>
     </div>
 </div>
+
+<!-- Subscriptions List -->
+<div class="subscriptions-list" id="subscriptions-list">
+    <div class="loading-placeholder">Loading subscriptions...</div>
+</div>
+
+<!-- Pagination -->
+<div class="pagination-wrapper" id="pagination-wrapper" style="display: none;">
+    <div class="pagination-info">
+        <span id="pagination-info-text"></span>
+    </div>
+    <div class="pagination-controls">
+        <button id="prev-page" class="btn btn-secondary" disabled>Previous</button>
+        <span id="page-numbers"></span>
+        <button id="next-page" class="btn btn-secondary" disabled>Next</button>
+    </div>
+</div>
+
+<!-- Add Subscription Modal -->
+<div class="modal" id="add-subscription-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Subscription</h3>
+            <button class="modal-close" id="close-add-subscription">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="add-subscription-form">
+                <div class="form-group">
+                    <label for="source-url">YouTube URL</label>
+                    <input type="url" id="source-url" name="source_url" 
+                           placeholder="https://www.youtube.com/channel/... or https://www.youtube.com/playlist?list=..." required>
+                    <small class="form-help">Paste a YouTube channel or playlist URL</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="subscription-type-add">Type</label>
+                    <select id="subscription-type-add" name="subscription_type" required>
+                        <option value="channel">Channel</option>
+                        <option value="playlist">Playlist</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="quality-preference-add">Quality Preference</label>
+                    <select id="quality-preference-add" name="quality_preference">
+                        <option value="best">Best Available</option>
+                        <option value="1080p">1080p</option>
+                        <option value="720p">720p</option>
+                        <option value="480p">480p</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="check-frequency-add">Check Frequency</label>
+                    <select id="check-frequency-add" name="check_frequency">
+                        <option value="0 * * * *">Every hour</option>
+                        <option value="0 */6 * * *">Every 6 hours</option>
+                        <option value="0 */12 * * *">Every 12 hours</option>
+                        <option value="0 0 * * *">Daily</option>
+                        <option value="0 0 */3 * *">Every 3 days</option>
+                        <option value="0 0 0 * *">Weekly</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="download-comments-add" name="download_comments">
+                        Download comments
+                    </label>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="cancel-add-subscription">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Subscription</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Subscription Modal -->
+<div class="modal" id="edit-subscription-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit Subscription</h3>
+            <button class="modal-close" id="close-edit-subscription">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="edit-subscription-form">
+                <input type="hidden" id="edit-subscription-id">
+                
+                <div class="form-group">
+                    <label for="quality-preference-edit">Quality Preference</label>
+                    <select id="quality-preference-edit" name="quality_preference">
+                        <option value="best">Best Available</option>
+                        <option value="1080p">1080p</option>
+                        <option value="720p">720p</option>
+                        <option value="480p">480p</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="check-frequency-edit">Check Frequency</label>
+                    <select id="check-frequency-edit" name="check_frequency">
+                        <option value="0 * * * *">Every hour</option>
+                        <option value="0 */6 * * *">Every 6 hours</option>
+                        <option value="0 */12 * * *">Every 12 hours</option>
+                        <option value="0 0 * * *">Daily</option>
+                        <option value="0 0 */3 * *">Every 3 days</option>
+                        <option value="0 0 0 * *">Weekly</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="download-comments-edit" name="download_comments">
+                        Download comments
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enabled-edit" name="enabled">
+                        Enable subscription
+                    </label>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="cancel-edit-subscription">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.subscription-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+
+.filter-group, .action-group {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+}
+
+.filter-select {
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.875rem;
+    min-width: 120px;
+}
+
+.filter-select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.refresh-icon {
+    display: inline-block;
+    transition: transform 0.3s ease;
+}
+
+.refresh-icon.spinning {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.subscriptions-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.subscription-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.subscription-item:hover {
+    border-color: var(--primary);
+    box-shadow: var(--glow-primary);
+}
+
+.subscription-header {
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
+}
+
+.subscription-info {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+}
+
+.subscription-avatar {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: var(--surface-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.subscription-avatar img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.subscription-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.subscription-name {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: var(--space-1);
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.subscription-meta {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.subscription-status {
+    position: absolute;
+    top: var(--space-2);
+    right: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.subscription-item {
+    position: relative;
+}
+
+.status-enabled {
+    background: rgba(0, 255, 136, 0.2);
+    color: var(--terminal-green);
+    border: 1px solid rgba(0, 255, 136, 0.3);
+}
+
+.status-disabled {
+    background: rgba(255, 170, 0, 0.2);
+    color: var(--terminal-amber);
+    border: 1px solid rgba(255, 170, 0, 0.3);
+}
+
+.subscription-stats {
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-hover);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: var(--space-3);
+    text-align: center;
+}
+
+.stat-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.stat-value {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.stat-label {
+    font-size: 0.625rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-weight: 500;
+}
+
+.subscription-actions {
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.form-help {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: var(--space-1);
+}
+
+.pagination-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-4) 0;
+    border-top: 1px solid var(--border);
+}
+
+.pagination-controls {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+}
+
+.page-numbers {
+    display: flex;
+    gap: var(--space-1);
+    margin: 0 var(--space-2);
+}
+
+.page-number {
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+}
+
+.page-number:hover {
+    border-color: var(--primary);
+    background: var(--surface-hover);
+}
+
+.page-number.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+.empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-secondary);
+}
+
+.empty-state-icon {
+    font-size: 3rem;
+    margin-bottom: var(--space-3);
+}
+
+@media (max-width: 768px) {
+    .subscription-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .filter-group, .action-group {
+        justify-content: center;
+    }
+    
+    .subscription-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .subscription-actions {
+        justify-content: center;
+    }
+    
+    .pagination-wrapper {
+        flex-direction: column;
+        gap: var(--space-3);
+    }
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+class SubscriptionsPage {
+    constructor() {
+        this.currentPage = 1;
+        this.perPage = 10;
+        this.currentFilters = {
+            enabled: '',
+            subscription_type: ''
+        };
+        
+        this.init();
+    }
+    
+    async init() {
+        this.setupEventListeners();
+        await this.loadSubscriptions();
+        await this.loadStats();
+    }
+    
+    setupEventListeners() {
+        // Filters
+        document.getElementById('status-filter').addEventListener('change', (e) => {
+            this.currentFilters.enabled = e.target.value === 'enabled' ? true : e.target.value === 'disabled' ? false : '';
+            this.resetAndSearch();
+        });
+        
+        document.getElementById('type-filter').addEventListener('change', (e) => {
+            this.currentFilters.subscription_type = e.target.value;
+            this.resetAndSearch();
+        });
+        
+        // Actions
+        document.getElementById('refresh-subscriptions').addEventListener('click', () => {
+            this.refreshSubscriptions();
+        });
+        
+        document.getElementById('add-subscription').addEventListener('click', () => {
+            youHoard.showModal('add-subscription-modal');
+        });
+        
+        document.getElementById('check-all').addEventListener('click', () => {
+            this.checkAllSubscriptions();
+        });
+        
+        // Pagination
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (this.currentPage > 1) {
+                this.currentPage--;
+                this.loadSubscriptions();
+            }
+        });
+        
+        document.getElementById('next-page').addEventListener('click', () => {
+            this.currentPage++;
+            this.loadSubscriptions();
+        });
+        
+        // Modals
+        document.getElementById('close-add-subscription').addEventListener('click', () => {
+            youHoard.hideModal('add-subscription-modal');
+        });
+        
+        document.getElementById('cancel-add-subscription').addEventListener('click', () => {
+            youHoard.hideModal('add-subscription-modal');
+        });
+        
+        document.getElementById('close-edit-subscription').addEventListener('click', () => {
+            youHoard.hideModal('edit-subscription-modal');
+        });
+        
+        document.getElementById('cancel-edit-subscription').addEventListener('click', () => {
+            youHoard.hideModal('edit-subscription-modal');
+        });
+        
+        // Forms
+        document.getElementById('add-subscription-form').addEventListener('submit', (e) => {
+            this.handleAddSubscription(e);
+        });
+        
+        document.getElementById('edit-subscription-form').addEventListener('submit', (e) => {
+            this.handleEditSubscription(e);
+        });
+    }
+    
+    async loadSubscriptions() {
+        try {
+            const params = new URLSearchParams({
+                page: this.currentPage,
+                per_page: this.perPage
+            });
+            
+            // Add filters
+            if (this.currentFilters.enabled !== '') {
+                if (this.currentFilters.enabled) {
+                    params.append('enabled_only', 'true');
+                }
+            }
+            
+            const response = await youHoard.apiCall(`/api/subscriptions?${params}`);
+            this.renderSubscriptions(response.subscriptions || []);
+            this.renderPagination(response);
+            
+        } catch (error) {
+            console.error('Failed to load subscriptions:', error);
+            this.renderError('Failed to load subscriptions');
+        }
+    }
+    
+    async loadStats() {
+        try {
+            const [subscriptionsResponse, schedulerResponse] = await Promise.all([
+                youHoard.apiCall('/api/subscriptions?per_page=1'),
+                youHoard.apiCall('/api/subscriptions/scheduler/status')
+            ]);
+            
+            document.getElementById('total-subscriptions').textContent = subscriptionsResponse.total || 0;
+            
+            // Get active subscriptions count
+            const activeResponse = await youHoard.apiCall('/api/subscriptions?enabled_only=true&per_page=1');
+            document.getElementById('active-subscriptions').textContent = activeResponse.total || 0;
+            
+            document.getElementById('scheduled-jobs').textContent = schedulerResponse.total_jobs || 0;
+            
+            // Calculate last check time
+            if (schedulerResponse.scheduled_subscriptions && schedulerResponse.scheduled_subscriptions.length > 0) {
+                const lastCheck = schedulerResponse.scheduled_subscriptions
+                    .map(s => s.last_run_time)
+                    .filter(t => t)
+                    .sort()
+                    .pop();
+                
+                document.getElementById('last-check').textContent = lastCheck ? 
+                    youHoard.formatRelativeTime(lastCheck) : 'Never';
+            } else {
+                document.getElementById('last-check').textContent = 'Never';
+            }
+            
+        } catch (error) {
+            console.error('Failed to load stats:', error);
+        }
+    }
+    
+    async refreshSubscriptions() {
+        const refreshIcon = document.querySelector('.refresh-icon');
+        refreshIcon.classList.add('spinning');
+        
+        try {
+            await this.loadSubscriptions();
+            await this.loadStats();
+        } finally {
+            setTimeout(() => {
+                refreshIcon.classList.remove('spinning');
+            }, 500);
+        }
+    }
+    
+    renderSubscriptions(subscriptions) {
+        const container = document.getElementById('subscriptions-list');
+        
+        if (subscriptions.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📺</div>
+                    <h3>No subscriptions found</h3>
+                    <p>Get started by adding your first subscription!</p>
+                    <button class="btn btn-primary" onclick="youHoard.showModal('add-subscription-modal')">Add Subscription</button>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = subscriptions.map(subscription => this.renderSubscriptionItem(subscription)).join('');
+    }
+    
+    renderSubscriptionItem(subscription) {
+        return `
+            <div class="subscription-item">
+                <div class="subscription-status status-${subscription.enabled ? 'enabled' : 'disabled'}">
+                    ${subscription.enabled ? 'Active' : 'Paused'}
+                </div>
+                
+                <div class="subscription-header">
+                    <div class="subscription-info">
+                        <div class="subscription-avatar">
+                            📺
+                        </div>
+                        <div class="subscription-details">
+                            <div class="subscription-name">${youHoard.escapeHtml(subscription.channel_name)}</div>
+                            <div class="subscription-meta">
+                                <span>Type: ${subscription.subscription_type}</span>
+                                <span>Quality: ${subscription.quality_preference}</span>
+                                <span>Check: ${this.formatCronFrequency(subscription.check_frequency)}</span>
+                                <span>Last check: ${subscription.last_check ? youHoard.formatRelativeTime(subscription.last_check) : 'Never'}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="subscription-stats">
+                    <div class="stat-item">
+                        <div class="stat-value">${subscription.new_videos_count || 0}</div>
+                        <div class="stat-label">New Videos</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${subscription.download_comments ? 'Yes' : 'No'}</div>
+                        <div class="stat-label">Comments</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${subscription.next_check ? youHoard.formatRelativeTime(subscription.next_check) : 'Unknown'}</div>
+                        <div class="stat-label">Next Check</div>
+                    </div>
+                </div>
+                
+                <div class="subscription-actions">
+                    <button class="btn btn-primary btn-sm" onclick="subscriptionsPage.checkSubscription(${subscription.id})">Check Now</button>
+                    <button class="btn btn-secondary btn-sm" onclick="subscriptionsPage.editSubscription(${subscription.id})">Edit</button>
+                    ${subscription.enabled ? 
+                        `<button class="btn btn-warning btn-sm" onclick="subscriptionsPage.pauseSubscription(${subscription.id})">Pause</button>` :
+                        `<button class="btn btn-success btn-sm" onclick="subscriptionsPage.resumeSubscription(${subscription.id})">Resume</button>`
+                    }
+                    <a href="${subscription.source_url}" target="_blank" class="btn btn-secondary btn-sm">YouTube</a>
+                    <button class="btn btn-danger btn-sm" onclick="subscriptionsPage.deleteSubscription(${subscription.id})">Delete</button>
+                </div>
+            </div>
+        `;
+    }
+    
+    renderPagination(response) {
+        const wrapper = document.getElementById('pagination-wrapper');
+        const info = document.getElementById('pagination-info-text');
+        const prevBtn = document.getElementById('prev-page');
+        const nextBtn = document.getElementById('next-page');
+        const pageNumbers = document.getElementById('page-numbers');
+        
+        if (!response.total || response.total === 0) {
+            wrapper.style.display = 'none';
+            return;
+        }
+        
+        wrapper.style.display = 'flex';
+        
+        // Update info
+        const start = ((this.currentPage - 1) * this.perPage) + 1;
+        const end = Math.min(this.currentPage * this.perPage, response.total);
+        info.textContent = `Showing ${start}-${end} of ${response.total} subscriptions`;
+        
+        // Update buttons
+        prevBtn.disabled = this.currentPage === 1;
+        const totalPages = Math.ceil(response.total / this.perPage);
+        nextBtn.disabled = this.currentPage >= totalPages;
+        
+        // Update page numbers
+        pageNumbers.innerHTML = this.generatePageNumbers(this.currentPage, totalPages);
+    }
+    
+    generatePageNumbers(current, total) {
+        const pages = [];
+        const showPages = 5;
+        let start = Math.max(1, current - Math.floor(showPages / 2));
+        let end = Math.min(total, start + showPages - 1);
+        
+        if (end - start < showPages - 1) {
+            start = Math.max(1, end - showPages + 1);
+        }
+        
+        for (let i = start; i <= end; i++) {
+            pages.push(`
+                <a href="#" class="page-number ${i === current ? 'active' : ''}" 
+                   onclick="subscriptionsPage.goToPage(${i}); return false;">
+                    ${i}
+                </a>
+            `);
+        }
+        
+        return pages.join('');
+    }
+    
+    goToPage(page) {
+        this.currentPage = page;
+        this.loadSubscriptions();
+    }
+    
+    resetAndSearch() {
+        this.currentPage = 1;
+        this.loadSubscriptions();
+    }
+    
+    async handleAddSubscription(event) {
+        event.preventDefault();
+        
+        const form = event.target;
+        const formData = new FormData(form);
+        
+        const subscriptionData = {
+            source_url: formData.get('source_url'),
+            subscription_type: formData.get('subscription_type'),
+            quality_preference: formData.get('quality_preference'),
+            check_frequency: formData.get('check_frequency'),
+            download_comments: formData.get('download_comments') === 'on',
+            enabled: true
+        };
+        
+        try {
+            await youHoard.apiCall('/api/subscriptions', {
+                method: 'POST',
+                body: JSON.stringify(subscriptionData)
+            });
+            
+            youHoard.showToast('Subscription created successfully!', 'success');
+            youHoard.hideModal('add-subscription-modal');
+            form.reset();
+            this.loadSubscriptions();
+            this.loadStats();
+            
+        } catch (error) {
+            console.error('Failed to create subscription:', error);
+            youHoard.showToast('Failed to create subscription', 'error');
+        }
+    }
+    
+    async editSubscription(subscriptionId) {
+        try {
+            const subscription = await youHoard.apiCall(`/api/subscriptions/${subscriptionId}`);
+            
+            // Populate form
+            document.getElementById('edit-subscription-id').value = subscriptionId;
+            document.getElementById('quality-preference-edit').value = subscription.quality_preference;
+            document.getElementById('check-frequency-edit').value = subscription.check_frequency;
+            document.getElementById('download-comments-edit').checked = subscription.download_comments;
+            document.getElementById('enabled-edit').checked = subscription.enabled;
+            
+            youHoard.showModal('edit-subscription-modal');
+            
+        } catch (error) {
+            console.error('Failed to load subscription:', error);
+            youHoard.showToast('Failed to load subscription details', 'error');
+        }
+    }
+    
+    async handleEditSubscription(event) {
+        event.preventDefault();
+        
+        const form = event.target;
+        const formData = new FormData(form);
+        const subscriptionId = document.getElementById('edit-subscription-id').value;
+        
+        const updateData = {
+            quality_preference: formData.get('quality_preference'),
+            check_frequency: formData.get('check_frequency'),
+            download_comments: formData.get('download_comments') === 'on',
+            enabled: formData.get('enabled') === 'on'
+        };
+        
+        try {
+            await youHoard.apiCall(`/api/subscriptions/${subscriptionId}`, {
+                method: 'PUT',
+                body: JSON.stringify(updateData)
+            });
+            
+            youHoard.showToast('Subscription updated successfully!', 'success');
+            youHoard.hideModal('edit-subscription-modal');
+            this.loadSubscriptions();
+            this.loadStats();
+            
+        } catch (error) {
+            console.error('Failed to update subscription:', error);
+            youHoard.showToast('Failed to update subscription', 'error');
+        }
+    }
+    
+    async checkSubscription(subscriptionId) {
+        try {
+            const result = await youHoard.apiCall(`/api/subscriptions/${subscriptionId}/check`, {
+                method: 'POST'
+            });
+            
+            const newVideosCount = result.new_videos ? result.new_videos.length : 0;
+            youHoard.showToast(`Check complete. Found ${newVideosCount} new videos.`, 'success');
+            this.loadSubscriptions();
+            
+        } catch (error) {
+            console.error('Failed to check subscription:', error);
+            youHoard.showToast('Failed to check subscription', 'error');
+        }
+    }
+    
+    async checkAllSubscriptions() {
+        if (!confirm('This will check all active subscriptions for new content. This may take a while. Continue?')) {
+            return;
+        }
+        
+        try {
+            // Get all active subscriptions
+            const response = await youHoard.apiCall('/api/subscriptions?enabled_only=true&per_page=100');
+            
+            let totalNew = 0;
+            let completed = 0;
+            const total = response.subscriptions.length;
+            
+            youHoard.showToast(`Checking ${total} subscriptions...`, 'info');
+            
+            for (const subscription of response.subscriptions) {
+                try {
+                    const result = await youHoard.apiCall(`/api/subscriptions/${subscription.id}/check`, {
+                        method: 'POST'
+                    });
+                    
+                    totalNew += result.new_videos ? result.new_videos.length : 0;
+                } catch (error) {
+                    console.error(`Failed to check subscription ${subscription.id}:`, error);
+                }
+                
+                completed++;
+                
+                // Update progress
+                if (completed % 5 === 0 || completed === total) {
+                    youHoard.showToast(`Checked ${completed}/${total} subscriptions...`, 'info');
+                }
+            }
+            
+            youHoard.showToast(`Check complete! Found ${totalNew} new videos across all subscriptions.`, 'success');
+            this.loadSubscriptions();
+            this.loadStats();
+            
+        } catch (error) {
+            console.error('Failed to check all subscriptions:', error);
+            youHoard.showToast('Failed to check all subscriptions', 'error');
+        }
+    }
+    
+    async pauseSubscription(subscriptionId) {
+        try {
+            await youHoard.apiCall(`/api/subscriptions/${subscriptionId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ enabled: false })
+            });
+            
+            youHoard.showToast('Subscription paused', 'success');
+            this.loadSubscriptions();
+            this.loadStats();
+            
+        } catch (error) {
+            console.error('Failed to pause subscription:', error);
+            youHoard.showToast('Failed to pause subscription', 'error');
+        }
+    }
+    
+    async resumeSubscription(subscriptionId) {
+        try {
+            await youHoard.apiCall(`/api/subscriptions/${subscriptionId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ enabled: true })
+            });
+            
+            youHoard.showToast('Subscription resumed', 'success');
+            this.loadSubscriptions();
+            this.loadStats();
+            
+        } catch (error) {
+            console.error('Failed to resume subscription:', error);
+            youHoard.showToast('Failed to resume subscription', 'error');
+        }
+    }
+    
+    async deleteSubscription(subscriptionId) {
+        if (!confirm('Are you sure you want to delete this subscription? This action cannot be undone.')) {
+            return;
+        }
+        
+        try {
+            await youHoard.apiCall(`/api/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+            youHoard.showToast('Subscription deleted successfully', 'success');
+            this.loadSubscriptions();
+            this.loadStats();
+        } catch (error) {
+            console.error('Failed to delete subscription:', error);
+            youHoard.showToast('Failed to delete subscription', 'error');
+        }
+    }
+    
+    renderError(message) {
+        const container = document.getElementById('subscriptions-list');
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon" style="color: var(--error);">⚠️</div>
+                <h3>Error Loading Subscriptions</h3>
+                <p>${message}</p>
+                <button class="btn btn-primary" onclick="subscriptionsPage.loadSubscriptions()">Try Again</button>
+            </div>
+        `;
+    }
+    
+    formatCronFrequency(cronExpression) {
+        const frequencies = {
+            '0 * * * *': 'Hourly',
+            '0 */6 * * *': 'Every 6 hours',
+            '0 */12 * * *': 'Every 12 hours',
+            '0 0 * * *': 'Daily',
+            '0 0 */3 * *': 'Every 3 days',
+            '0 0 0 * *': 'Weekly'
+        };
+        
+        return frequencies[cronExpression] || cronExpression;
+    }
+}
+
+// Initialize when page loads
+let subscriptionsPage;
+document.addEventListener('DOMContentLoaded', () => {
+    subscriptionsPage = new SubscriptionsPage();
+});
+</script>
 {% endblock %} 
