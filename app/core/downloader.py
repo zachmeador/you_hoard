@@ -14,9 +14,10 @@ from app.core.database import Database
 
 class DownloadProgress:
     """Track download progress"""
-    def __init__(self, video_id: int, callback: Optional[Callable] = None):
+    def __init__(self, video_id: int, loop: asyncio.AbstractEventLoop, callback: Optional[Callable] = None):
         self.video_id = video_id
         self.callback = callback
+        self.loop = loop
         self.status = "pending"
         self.progress = 0.0
         self.speed = None
@@ -41,7 +42,11 @@ class DownloadProgress:
             self.error = str(d.get('error', 'Unknown error'))
         
         if self.callback:
-            self.callback(self)
+            # Schedule the async callback on the event loop
+            if asyncio.iscoroutinefunction(self.callback):
+                asyncio.run_coroutine_threadsafe(self.callback(self), self.loop)
+            else:
+                self.callback(self)
 
 
 class Downloader:
@@ -54,6 +59,8 @@ class Downloader:
     
     def get_ydl_opts(self, output_path: Path, progress_hook: Optional[Callable] = None) -> dict:
         """Get yt-dlp options"""
+        import shutil
+        
         opts = {
             'format': settings.FORMAT_SELECTOR,
             'outtmpl': str(output_path / 'video.%(ext)s'),
@@ -67,6 +74,11 @@ class Downloader:
             'subtitleslangs': settings.SUBTITLE_LANGUAGES,
             'postprocessors': []
         }
+        
+        # Explicitly set ffmpeg path if found
+        ffmpeg_path = shutil.which('ffmpeg')
+        if ffmpeg_path:
+            opts['ffmpeg_location'] = ffmpeg_path
         
         if settings.EMBED_SUBS:
             opts['postprocessors'].append({
@@ -92,7 +104,8 @@ class Downloader:
     async def download_video(self, video_id: int, url: str, output_dir: Path) -> bool:
         """Download a video"""
         async with self._semaphore:
-            progress = DownloadProgress(video_id, self._update_progress_db)
+            loop = asyncio.get_event_loop()
+            progress = DownloadProgress(video_id, loop, self._update_progress_db_async)
             self.active_downloads[video_id] = progress
             
             try:
@@ -168,14 +181,18 @@ class Downloader:
             finally:
                 del self.active_downloads[video_id]
     
-    async def _update_progress_db(self, progress: DownloadProgress):
+    async def _update_progress_db_async(self, progress: DownloadProgress):
         """Update download progress in database"""
-        await self.db.update(
-            "download_queue",
-            {"progress": progress.progress},
-            "video_id = ?",
-            (progress.video_id,)
-        )
+        try:
+            await self.db.update(
+                "download_queue",
+                {"progress": progress.progress},
+                "video_id = ?",
+                (progress.video_id,)
+            )
+        except Exception as e:
+            # Don't let progress update errors crash the download
+            print(f"Progress update error: {e}")
     
     async def queue_download(self, video_id: int, priority: int = 0) -> int:
         """Add video to download queue"""

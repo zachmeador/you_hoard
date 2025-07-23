@@ -4,13 +4,15 @@
 
 This document outlines the implementation plan for You Hoard, a self-hosted YouTube archiving application. The plan is organized into phases, starting with core infrastructure and progressively adding features.
 
-## 📈 **Current Status: MVP Application Running**
+## 📈 **Current Status: BACKEND COMPLETE, FRONTEND MINIMAL**
 
-**✅ Completed:** Full backend API with authentication, video/channel/subscription management, download queue, database schema, APScheduler integration, and frontend foundation.
+**✅ Backend:** Full API, authentication, video/channel/subscription management, working download system, APScheduler integration, and end-to-end functionality.
 
-**🚀 Running:** Application server at http://localhost:8000 with complete UI and API.
+**⚠️ Frontend:** Login + Add Video working, but core browsing/management UI missing.
 
-**🔄 Next:** User creation setup, detailed frontend pages, and advanced features (Phase 6).
+**🎯 PROVEN:** Rick Astley video successfully downloaded (100MB WebM + metadata + thumbnail) via API.
+
+**🔄 Next:** Complete web UI for core functionality (Phase 5 continuation), then advanced features (Phase 6).
 
 ## Implementation Phases
 
@@ -18,7 +20,7 @@ This document outlines the implementation plan for You Hoard, a self-hosted YouT
 - **Phase 2**: Basic Downloading ✅ **COMPLETED**
 - **Phase 3**: Channel Management ✅ **COMPLETED**
 - **Phase 4**: Subscription System ✅ **COMPLETED**
-- **Phase 5**: Frontend Development ✅ **COMPLETED** (foundation)
+- **Phase 5**: Frontend Development ⚠️ **PARTIAL** (infrastructure complete, core UI missing)
 - **Phase 6**: Advanced Features 🔄 **NEXT**
 - **Phase 7**: Polish & Testing
 
@@ -140,12 +142,12 @@ Implement automated content checking and downloading for subscribed channels.
    - ✅ Scheduler status monitoring endpoint
    - ✅ Proper job management (add/remove/update subscriptions)
 
-## Phase 5: Frontend Development ✅ **COMPLETED** (Foundation)
+## Phase 5: Frontend Development ⚠️ **PARTIAL** (Infrastructure Complete, Core UI Missing)
 
 ### Goals
 Create a clean, functional web interface for all features.
 
-### Tasks ✅ **FOUNDATION COMPLETED**
+### Tasks ⚠️ **INFRASTRUCTURE COMPLETE, CORE UI NEEDED**
 
 1. **Base Layout** ✅
    - ✅ Create responsive navigation structure (`app/templates/base.html`)
@@ -153,19 +155,24 @@ Create a clean, functional web interface for all features.
    - ✅ Set up static file serving and templates
    - ✅ Create base template structure with Jinja2
 
-2. **Core Pages** ✅ **FOUNDATION**
-   - ✅ **Home Dashboard**: Stats, recent downloads, scheduler status, quick actions
-   - ✅ **Login Page**: Clean authentication form with error handling
-   - ✅ **Template Structure**: All main pages (videos, channels, subscriptions, downloads, settings)
-   - ⚠️ **Detailed Pages**: Placeholder implementations (ready for expansion)
+2. **Core Pages** ⚠️ **MINIMAL FUNCTIONALITY**
+   - ✅ **Home Dashboard**: Stats, recent downloads, scheduler status, quick actions (basic)
+   - ✅ **Login Page**: Clean authentication form with error handling (working)
+   - ✅ **Template Structure**: All main pages exist (infrastructure ready)
+   - ✅ **Working UI Flow**: Login → Dashboard → Add Video works
+   - ❌ **Core Management UI**: Videos/channels/subscriptions/downloads pages are just placeholders
+   - ❌ **User Cannot**: Browse videos, manage channels, create subscriptions, monitor downloads via UI
 
-3. **Interactive Features** ✅ **CORE FUNCTIONALITY**
-   - ✅ Add Video modal with API integration
+3. **Interactive Features** ⚠️ **LIMITED FUNCTIONALITY**
+   - ✅ Add Video modal with API integration (TESTED with Rick Astley)
    - ✅ Toast notifications system
    - ✅ User menu and dropdowns
    - ✅ API helper functions and error handling
    - ✅ Loading states and form management
-   - ⚠️ Advanced features pending (real-time progress, drag-drop, video player, tags)
+   - ✅ Cookie-based authentication working
+   - ✅ Video URL → Metadata extraction → Download pipeline (via modal only)
+   - ❌ **Missing Core UI**: No way to browse videos, manage downloads, create subscriptions via web
+   - ❌ Advanced features pending (real-time progress, drag-drop, video player, tags)
 
 4. **Frontend Infrastructure** ✅
    - ✅ Modern CSS design system (`app/static/css/main.css`)
@@ -174,13 +181,37 @@ Create a clean, functional web interface for all features.
    - ✅ Component-based CSS (cards, buttons, forms, modals)
    - ✅ Authentication integration with backend APIs
 
+5. **Proven Functionality** ✅ **TESTED**
+   - ✅ User creation via `/api/auth/setup`
+   - ✅ Login/logout flow with session cookies
+   - ✅ Video addition: `https://www.youtube.com/watch?v=dQw4w9WgXcQ` → success
+   - ✅ Download queue: queued → downloading → completed (100% progress)
+   - ✅ File organization: `storage/channels/UCuAXFkgsw1L7xaCfnd5JJOw_Rick_Astley/dQw4w9WgXcQ_*/`
+   - ✅ Downloaded files: `video.webm` (100MB), `video.info.json` (2.9MB), `video.webp` (28KB)
+
 ### Frontend Stack ✅
 - ✅ Vanilla JavaScript (no framework)
 - ✅ Modern CSS with Grid/Flexbox and CSS variables
 - ✅ Jinja2 templates with FastAPI
 - ✅ Progressive enhancement approach
 
-### **Next: Expand detailed page functionality and advanced features**
+### **Status: Backend MVP Complete, Frontend MVP Incomplete**
+
+**✅ What Users Can Do Via Web UI:**
+- Login/logout
+- View dashboard stats
+- Add videos via URL
+- Navigate between pages
+
+**❌ What Users Cannot Do Via Web UI (Backend ready, UI missing):**
+- Browse/search videos
+- View video details
+- Manage channels
+- Create/manage subscriptions  
+- Monitor download progress
+- Change settings
+
+**🔄 Next Priority:** Build core management UI pages to make backend functionality accessible via web interface.
 
 ## Phase 6: Advanced Features 🔄 **NEXT**
 
@@ -189,16 +220,23 @@ Add quality-of-life features and optimizations.
 
 ### Tasks
 
-1. **User Management** 🔄 **IMMEDIATE NEED**
-   - Create initial user setup endpoint/UI
-   - User management interface
-   - Password change functionality
+1. **User Management** ✅ **WORKING**
+   - ✅ Initial user setup endpoint (`/api/auth/setup`) - TESTED
+   - ⚠️ User management interface - placeholder
+   - ⚠️ Password change functionality - not implemented
 
-2. **Detailed Frontend Pages** 🔄 **HIGH PRIORITY**
-   - **Videos Page**: Grid view, search, filters, bulk operations, video player
-   - **Channels Page**: Channel cards, subscription management, statistics
-   - **Subscriptions Page**: Create/edit subscriptions, scheduling, status monitoring
-   - **Downloads Page**: Queue view, progress bars, real-time updates
+2. **Core Frontend Pages** 🔄 **IMMEDIATE PRIORITY**
+   - ❌ **Videos Page**: Grid view, search, filters, video details (backend ready)
+   - ❌ **Channels Page**: Channel cards, basic info display (backend ready)
+   - ❌ **Subscriptions Page**: Create/edit subscriptions, status monitoring (backend ready)
+   - ❌ **Downloads Page**: Queue view, progress display, retry controls (backend ready)
+   - ❌ **Settings Page**: Basic configuration options (backend ready)
+
+3. **Advanced Frontend Features** 🔄 **LOWER PRIORITY**
+   - **Enhanced Videos**: Bulk operations, video player, advanced search
+   - **Enhanced Channels**: Subscription management, detailed statistics  
+   - **Enhanced Subscriptions**: Scheduling UI, automated monitoring
+   - **Enhanced Downloads**: Real-time progress bars, background updates
 
 3. **Tagging System**
    - Implement tag CRUD endpoints (backend exists)
@@ -284,21 +322,30 @@ Ensure reliability, performance, and user experience.
 - Forgetting about concurrent access
 - Rate limiting issues with YouTube
 
-## MVP Definition ✅ **ACHIEVED**
+## MVP Definition ⚠️ **BACKEND ACHIEVED, FRONTEND INCOMPLETE**
 
-The Minimum Viable Product includes:
-- ✅ User authentication (login/logout)
-- ✅ Add videos by URL (modal + API integration)
-- ✅ Download videos with progress tracking (queue system)
-- ✅ View downloaded videos (API ready, UI foundation)
-- ✅ Basic channel organization (full backend + UI foundation)
-- ✅ Simple web UI (responsive, modern design)
-- ✅ **BONUS**: Subscription automation with scheduler
-- ✅ **BONUS**: Dashboard with real-time stats
+The Minimum Viable Product backend includes:
+- ✅ User authentication (login/logout) - **API + UI WORKING**
+- ✅ Add videos by URL (modal + API integration) - **API + UI WORKING**
+- ✅ Download videos with progress tracking (queue system) - **API PROVEN**
+- ⚠️ View downloaded videos - **API ready, UI missing**
+- ⚠️ Basic channel organization - **API ready, UI missing**
+- ⚠️ Simple web UI for core functionality - **Infrastructure complete, management UI missing**
+- ✅ **BONUS**: Subscription automation with scheduler - **API IMPLEMENTED**
+- ✅ **BONUS**: Dashboard with real-time stats - **UI FUNCTIONAL**
 
-**🎉 MVP is now functional and running at http://localhost:8000**
+### **🎯 CURRENT REALITY CHECK:**
+**Backend Functionality:** ✅ **PRODUCTION-READY**
+- Complete API with all features working
+- Proven download pipeline (Rick Astley test: 100MB video + metadata)
+- Automated scheduling system functional
 
-Everything else can be added iteratively based on user needs.
+**Frontend Usability:** ⚠️ **MINIMAL**
+- Users can login and add videos
+- Users **cannot** browse videos, manage channels, or use subscriptions via web UI
+- All management must be done via API calls
+
+**🔄 Next Step:** Complete web UI for core functionality to make this truly usable for end users.
 
 ## Future Considerations
 
@@ -321,10 +368,10 @@ Everything else can be added iteratively based on user needs.
 
 **🚀 Application is running at http://localhost:8000**
 
-### Immediate Setup Required:
-1. **Create Initial User**: Use API to create first user account
-2. **Test Core Functionality**: Add videos, create subscriptions
-3. **Develop Detailed Pages**: Expand placeholder pages with full functionality
+### ✅ Setup Complete:
+1. ✅ **User Created**: Admin user created via `/api/auth/setup`
+2. ✅ **Core Functionality Tested**: Video addition and download proven working
+3. 🔄 **Next**: Develop detailed pages to expand placeholder pages with full functionality
 
 ### Development Commands:
 ```bash
@@ -332,10 +379,20 @@ Everything else can be added iteratively based on user needs.
 cd /path/to/you_hoard
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-# Create first user (via API)
-curl -X POST http://localhost:8000/api/auth/register \
+# Create first user (via API) - ✅ COMPLETED
+curl -X POST http://localhost:8000/api/auth/setup \
   -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "your-password"}'
+  -d '{"username": "admin", "password": "admin123"}'
+
+# Test video addition - ✅ WORKING
+# Use browser: http://localhost:8000 → Login → "+ Add Video" → paste YouTube URL
+
+# Verify download - ✅ PROVEN  
+ls -la storage/channels/*/
 ```
 
-Remember: The goal is a simple, reliable YouTube archiver. ✅ **ACHIEVED - MVP IS WORKING!** 
+Remember: The goal is a simple, reliable YouTube archiver. 
+
+⚠️ **BACKEND MISSION ACCOMPLISHED - FRONTEND CORE FUNCTIONALITY NEEDED**
+
+**Status**: From "probability = 0%" to working backend with proven download capability, but web UI needs core management pages for true usability. 🔄 

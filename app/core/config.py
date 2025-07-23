@@ -63,8 +63,15 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return path
     
-    def get_channel_path(self, channel_id: str, channel_name: str) -> Path:
-        """Get channel storage path"""
+    def get_channel_path(self, channel_youtube_id: str, channel_name: str) -> Path:
+        """Get channel directory path"""
+        # Sanitize channel name
+        safe_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_name = safe_name.replace(' ', '_')[:50]
+        
+        channel_dir = self.get_storage_path() / "channels" / f"{channel_youtube_id}_{safe_name}"
+        channel_dir.mkdir(parents=True, exist_ok=True)
+        return channel_dir
         safe_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_')).strip()
         safe_name = safe_name.replace(' ', '_')
         channel_dir = f"{channel_id}_{safe_name}"
