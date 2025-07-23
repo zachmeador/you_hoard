@@ -69,9 +69,9 @@ class Downloader:
             'extract_flat': False,
             'writeinfojson': settings.WRITE_INFO_JSON,
             'writethumbnail': settings.WRITE_THUMBNAIL,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-            'subtitleslangs': settings.SUBTITLE_LANGUAGES,
+            'write_subs': True,
+            'write_auto_subs': True,
+            'sub_langs': settings.SUBTITLE_LANGUAGES,
             'postprocessors': []
         }
         
