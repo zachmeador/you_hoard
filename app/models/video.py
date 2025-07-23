@@ -25,24 +25,29 @@ class VideoBase(BaseModel):
         return v
 
 
-class VideoCreate(VideoBase):
+class VideoCreate(BaseModel):
     """Schema for creating a video"""
-    url: Optional[str] = None  # Alternative to youtube_id
+    # Either provide URL OR provide youtube_id + channel_id + title
+    url: Optional[str] = None
+    youtube_id: Optional[str] = None
+    channel_id: Optional[int] = None
+    title: Optional[str] = None
     
-    @validator('url')
-    def extract_video_id(cls, v, values):
-        if v and 'youtube_id' not in values:
-            # Extract video ID from URL
-            import re
-            patterns = [
-                r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})',
-                r'youtube\.com\/embed\/([a-zA-Z0-9_-]{11})',
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, v)
-                if match:
-                    return match.group(1)
-            raise ValueError('Invalid YouTube URL')
+    # Optional fields
+    description: Optional[str] = None
+    duration: Optional[int] = None
+    upload_date: Optional[datetime] = None
+    view_count: Optional[int] = None
+    like_count: Optional[int] = None
+    quality: Optional[str] = None
+    
+    @validator('youtube_id', always=True)
+    def validate_input(cls, v, values):
+        url = values.get('url')
+        if not url and not v:
+            raise ValueError('Either url or youtube_id must be provided')
+        if url and v:
+            raise ValueError('Provide either url or youtube_id, not both')
         return v
 
 

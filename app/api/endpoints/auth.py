@@ -1,7 +1,8 @@
 """
 Authentication endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Form
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -46,7 +47,7 @@ async def login(
     security_manager: SecurityManager = Depends(get_security_manager)
 ):
     """
-    Login with username and password
+    Login with username and password (API version)
     """
     user = await security_manager.authenticate_user(
         login_data.username,
@@ -66,6 +67,42 @@ async def login(
         token=token,
         username=user['username']
     )
+
+
+@router.post("/login-form")
+async def login_form(
+    username: str = Form(...),
+    password: str = Form(...),
+    request: Request = None,
+    security_manager: SecurityManager = Depends(get_security_manager)
+):
+    """
+    Login with form data and set session cookie
+    """
+    user = await security_manager.authenticate_user(username, password)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password"
+        )
+    
+    # Create session
+    token = security_manager.create_session(user['id'])
+    
+    # Create response that redirects to home
+    response = RedirectResponse(url="/", status_code=302)
+    
+    # Set session cookie
+    response.set_cookie(
+        key="session_token",
+        value=token,
+        max_age=86400 * 30,  # 30 days
+        httponly=True,
+        secure=False
+    )
+    
+    return response
 
 
 @router.post("/logout")
@@ -93,12 +130,19 @@ async def auth_status(
     """
     Check authentication status
     """
-    # Get token from Authorization header
+    # Try Authorization header first (for API clients)
     auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
+    token = None
+    
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        # Try session cookie (for web frontend)
+        token = request.cookies.get("session_token")
+    
+    if not token:
         return AuthStatus(authenticated=False)
     
-    token = auth_header[7:]
     session = security_manager.get_session(token)
     
     if not session:

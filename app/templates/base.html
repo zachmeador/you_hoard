@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}You Hoard{% endblock %}</title>
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', path='css/main.css') }}">
+    {% block extra_css %}{% endblock %}
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', path='favicon.ico') }}">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <a href="/" class="nav-logo">You Hoard</a>
+            </div>
+            
+            <div class="nav-menu">
+                <a href="/" class="nav-link">Home</a>
+                <a href="/videos" class="nav-link">Videos</a>
+                <a href="/channels" class="nav-link">Channels</a>
+                <a href="/subscriptions" class="nav-link">Subscriptions</a>
+                <a href="/downloads" class="nav-link">Downloads</a>
+                <a href="/settings" class="nav-link">Settings</a>
+            </div>
+            
+            <div class="nav-actions">
+                <button class="btn btn-primary" id="add-video-btn">+ Add Video</button>
+                <div class="user-menu">
+                    <button class="btn btn-ghost" id="user-menu-btn">Menu</button>
+                    <div class="dropdown-menu" id="user-dropdown">
+                        <a href="/logout" class="dropdown-item">Logout</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Add Video Modal -->
+    <div class="modal" id="add-video-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Video</h3>
+                <button class="modal-close" id="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="add-video-form">
+                    <div class="form-group">
+                        <label for="video-url">YouTube URL</label>
+                        <input type="url" id="video-url" name="url" 
+                               placeholder="https://www.youtube.com/watch?v=..." required>
+                    </div>
+                    <div class="form-group">
+                        <label for="video-quality">Quality</label>
+                        <select id="video-quality" name="quality">
+                            <option value="1080p">1080p</option>
+                            <option value="720p">720p</option>
+                            <option value="480p">480p</option>
+                            <option value="best">Best Available</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancel-add">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Add Video</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', path='js/main.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html> 

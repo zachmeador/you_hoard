@@ -36,6 +36,11 @@ def get_auth(request: Request) -> SessionBearer:
     return SessionBearer(security_manager)
 
 
+def get_scheduler(request: Request):
+    """Get scheduler from app state"""
+    return request.app.state.scheduler
+
+
 @router.get("", response_model=SubscriptionListResponse)
 async def list_subscriptions(
     page: int = Query(1, ge=1),
@@ -90,8 +95,10 @@ async def list_subscriptions(
 @router.post("", response_model=SubscriptionResponse)
 async def create_subscription(
     subscription_data: SubscriptionCreate,
+    request: Request,
     db: Database = Depends(get_db),
     downloader: Downloader = Depends(get_downloader),
+    scheduler = Depends(get_scheduler),
     _: dict = Depends(get_auth)
 ):
     """
@@ -151,6 +158,10 @@ async def create_subscription(
     
     subscription_id = await db.insert("subscriptions", sub_data)
     
+    # Add to scheduler if enabled
+    if sub_data.get('enabled', True):
+        await scheduler.add_subscription(subscription_id, sub_data.get('check_frequency', '0 * * * *'))
+    
     # Return created subscription
     return await get_subscription(subscription_id, db, _)
 
@@ -198,6 +209,7 @@ async def update_subscription(
     subscription_id: int,
     subscription_update: SubscriptionUpdate,
     db: Database = Depends(get_db),
+    scheduler = Depends(get_scheduler),
     _: dict = Depends(get_auth)
 ):
     """
@@ -226,6 +238,20 @@ async def update_subscription(
             update_data['extra_metadata'] = Database.json_encode(update_data['extra_metadata'])
         
         await db.update("subscriptions", update_data, "id = ?", (subscription_id,))
+        
+        # Update scheduler if enabled status or check frequency changed
+        if 'enabled' in update_data or 'check_frequency' in update_data:
+            # Get updated subscription
+            updated_sub = await db.execute_one(
+                "SELECT enabled, check_frequency FROM subscriptions WHERE id = ?",
+                (subscription_id,)
+            )
+            
+            if updated_sub:
+                if updated_sub['enabled']:
+                    await scheduler.update_subscription(subscription_id, updated_sub['check_frequency'])
+                else:
+                    await scheduler.remove_subscription(subscription_id)
     
     return await get_subscription(subscription_id, db, _)
 
@@ -234,6 +260,7 @@ async def update_subscription(
 async def delete_subscription(
     subscription_id: int,
     db: Database = Depends(get_db),
+    scheduler = Depends(get_scheduler),
     _: dict = Depends(get_auth)
 ):
     """
@@ -250,6 +277,9 @@ async def delete_subscription(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subscription not found"
         )
+    
+    # Remove from scheduler
+    await scheduler.remove_subscription(subscription_id)
     
     # Delete subscription
     await db.delete("subscriptions", "id = ?", (subscription_id,))
@@ -348,6 +378,7 @@ async def check_subscription(
 async def pause_subscription(
     subscription_id: int,
     db: Database = Depends(get_db),
+    scheduler = Depends(get_scheduler),
     _: dict = Depends(get_auth)
 ):
     """
@@ -365,6 +396,9 @@ async def pause_subscription(
             detail="Subscription not found"
         )
     
+    # Remove from scheduler
+    await scheduler.remove_subscription(subscription_id)
+    
     # Pause subscription
     await db.update(
         "subscriptions",
@@ -380,6 +414,7 @@ async def pause_subscription(
 async def resume_subscription(
     subscription_id: int,
     db: Database = Depends(get_db),
+    scheduler = Depends(get_scheduler),
     _: dict = Depends(get_auth)
 ):
     """
@@ -405,4 +440,30 @@ async def resume_subscription(
         (subscription_id,)
     )
     
-    return {"message": "Subscription resumed"} 
+    # Get subscription details and add to scheduler
+    subscription = await db.execute_one(
+        "SELECT check_frequency FROM subscriptions WHERE id = ?",
+        (subscription_id,)
+    )
+    
+    if subscription:
+        await scheduler.add_subscription(subscription_id, subscription['check_frequency'])
+    
+    return {"message": "Subscription resumed"}
+
+
+@router.get("/scheduler/status")
+async def get_scheduler_status(
+    scheduler = Depends(get_scheduler),
+    _: dict = Depends(get_auth)
+):
+    """
+    Get scheduler status and list of scheduled subscriptions
+    """
+    scheduled_jobs = scheduler.get_scheduled_subscriptions()
+    
+    return {
+        "scheduler_running": scheduler._is_running,
+        "scheduled_subscriptions": scheduled_jobs,
+        "total_jobs": len(scheduled_jobs)
+    } 
