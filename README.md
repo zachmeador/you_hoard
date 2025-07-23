@@ -1,4 +1,4 @@
-# youhoard
+# YouHoard
 
 A youtube archiver app that cares about simplicity and feature richness.
 

@@ -1,6 +1,6 @@
 [project]
-name = "you-hoard"
-version = "0.1.0"
+name = "YouHoard"
+version = "0.0.1"
 description = "Self-hosted YouTube archiving application"
 readme = "README.md"
 requires-python = ">=3.11"
