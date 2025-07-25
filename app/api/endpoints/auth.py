@@ -113,10 +113,17 @@ async def logout(
     """
     Logout and invalidate session
     """
-    # Get token from Authorization header
+    # Try Authorization header first (for API clients)
     auth_header = request.headers.get("Authorization", "")
+    token = None
+    
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
+    else:
+        # Try session cookie (for web frontend)
+        token = request.cookies.get("session_token")
+    
+    if token:
         security_manager.delete_session(token)
     
     return {"message": "Logged out successfully"}

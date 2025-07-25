@@ -69,3 +69,21 @@ Thumbs.db
 *.bak
 *.cache 
 uv.lock
+cookies.txt
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# Build outputs
+dist/
+build/
+app/static/dist/
+
+# Package manager lock files
+package-lock.json
+yarn.lock

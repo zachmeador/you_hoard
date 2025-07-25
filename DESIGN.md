@@ -22,8 +22,17 @@ You Hoard is a self-hosted YouTube archiving application designed to be simple, 
 - **Python UV**: Package management
 
 ### Frontend Stack
-- **Simple HTML/CSS/JS**: Information-dense, responsive UI
-- **Minimal frameworks**: Avoid complexity, focus on functionality
+- **Svelte**: Modern reactive UI framework with SPA routing
+- **Vite**: Build tool for fast development and optimized production builds
+- **CSS Variables**: Existing dark cypherpunk design system preserved
+- **Component Architecture**: Reusable UI components for maintainability
+
+### Why Svelte?
+- **Compile-time optimization**: No runtime overhead, perfect for self-hosted apps
+- **Reactive state management**: Automatic UI updates with minimal boilerplate
+- **Component-based**: Clean separation of concerns and reusability
+- **Small bundle size**: Fast loading for personal applications
+- **Easy migration**: Preserved existing CSS design system
 
 ## Database Schema
 
@@ -183,11 +192,34 @@ you_hoard/
 │   │   ├── video.py
 │   │   ├── channel.py
 │   │   └── subscription.py
-│   ├── static/
-│   └── templates/
+│   └── static/
+│       ├── css/
+│       │   └── main.css          # Design system CSS
+│       └── dist/                 # Svelte build output
+├── src/                          # Svelte source code
+│   ├── components/
+│   │   ├── Navigation.svelte
+│   │   ├── VideoCard.svelte
+│   │   ├── SearchFilters.svelte
+│   │   ├── Pagination.svelte
+│   │   ├── AddVideoModal.svelte
+│   │   ├── VideoDetailModal.svelte
+│   │   └── ToastContainer.svelte
+│   ├── pages/
+│   │   ├── Home.svelte
+│   │   ├── Videos.svelte
+│   │   ├── Channels.svelte
+│   │   ├── Subscriptions.svelte
+│   │   ├── Downloads.svelte
+│   │   └── Settings.svelte
+│   ├── App.svelte
+│   └── main.js
 ├── docs/
 ├── tests/
 ├── main.py
+├── package.json                  # Frontend dependencies
+├── vite.config.js               # Build configuration
+├── svelte.config.js
 ├── DESIGN.md
 ├── README.md
 └── pyproject.toml
@@ -278,6 +310,28 @@ you_hoard/
 - Authentication settings
 - Cleanup policies
 
+## Frontend Architecture Details
+
+### Component Structure
+- **App.svelte**: Main application with routing and global state
+- **Navigation.svelte**: Top navigation with logo animation
+- **VideoCard.svelte**: Reusable video display component
+- **SearchFilters.svelte**: Search and filtering controls
+- **Pagination.svelte**: Reusable pagination component
+- **Modals**: AddVideoModal and VideoDetailModal for user interactions
+- **ToastContainer.svelte**: Global notification system
+
+### State Management
+- **Reactive Variables**: Svelte's built-in reactivity for component state
+- **Event System**: Custom events for component communication
+- **API Integration**: Centralized API calling with error handling
+- **Backward Compatibility**: Global `window.youHoard` object for utility functions
+
+### Routing
+- **svelte-spa-router**: Client-side routing for SPA experience
+- **Hash-based routing**: `#/videos`, `#/channels`, etc.
+- **Fallback handling**: FastAPI serves Svelte app for all non-API routes
+
 ## Configuration
 
 ### Core Settings
@@ -291,13 +345,17 @@ you_hoard/
 - `cleanup_enabled`: Auto-cleanup old videos
 - `cleanup_days`: Days to keep videos before cleanup
 
-### Download Settings
-- `format_selector`: yt-dlp format selector string
-- `audio_quality`: Audio quality preference
-- `subtitle_languages`: Default subtitle languages to download
-- `embed_subs`: Whether to embed subtitles in video files
-- `write_info_json`: Save video metadata as JSON
-- `write_thumbnail`: Download video thumbnails
+### Development Setup
+- `npm install`: Install frontend dependencies
+- `npm run dev`: Start Vite development server with hot reload
+- `npm run build`: Build production assets
+- `python main.py`: Start FastAPI backend server
+
+### Production Deployment
+- Run `npm run build` to generate optimized frontend assets
+- Frontend assets are served from `app/static/dist/`
+- CSS design system served from `app/static/css/main.css`
+- FastAPI handles API routes and serves Svelte SPA for all other routes
 
 ## Security Considerations
 

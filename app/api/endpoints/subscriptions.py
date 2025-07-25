@@ -38,7 +38,7 @@ def get_auth(request: Request) -> SessionBearer:
 
 def get_scheduler(request: Request):
     """Get scheduler from app state"""
-    return request.app.state.scheduler
+    return getattr(request.app.state, 'scheduler', None)
 
 
 @router.get("", response_model=SubscriptionListResponse)
@@ -440,14 +440,15 @@ async def resume_subscription(
         (subscription_id,)
     )
     
-    # Get subscription details and add to scheduler
-    subscription = await db.execute_one(
-        "SELECT check_frequency FROM subscriptions WHERE id = ?",
-        (subscription_id,)
-    )
-    
-    if subscription:
-        await scheduler.add_subscription(subscription_id, subscription['check_frequency'])
+    # Get subscription details and add to scheduler (if available)
+    if scheduler:
+        subscription = await db.execute_one(
+            "SELECT check_frequency FROM subscriptions WHERE id = ?",
+            (subscription_id,)
+        )
+        
+        if subscription:
+            await scheduler.add_subscription(subscription_id, subscription['check_frequency'])
     
     return {"message": "Subscription resumed"}
 
@@ -460,6 +461,14 @@ async def get_scheduler_status(
     """
     Get scheduler status and list of scheduled subscriptions
     """
+    if scheduler is None:
+        # Scheduler not initialized - return default state
+        return {
+            "scheduler_running": False,
+            "scheduled_subscriptions": [],
+            "total_jobs": 0
+        }
+    
     scheduled_jobs = scheduler.get_scheduled_subscriptions()
     
     return {
