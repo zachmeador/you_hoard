@@ -1,11 +1,18 @@
 # YouHoard roadmap
 
-### Crucial
+### Things I need before I can use it
 
-- Switch all naming to YouHoard
 - Improve the quality selection options in frontend
     - Also do they work?
+    - Does it display a custom quality now?
 - Deleting videos in the frontend doesn't work
+- What of the subscription logic is implemented? 
+    - How does quality decision get handled? 
+- Up-front de-duping of videos: youhoard should only ever allow one instance of video. So if the user adds a video that's already there -> notification it exists already
+    - A subscription tries to get a vid that exists already -> doesn't
+        - But what's the smart way to build this?
+            - Thinking the subscription functionality, for either a channel or playlist, should store metadata of all available videos. Then the subscription looks at this storage on run and finds the diff between what's 
+- When subscribing to a channel the user needs to be able to specify what kind of content on the channel should be dl'd. videos/shorts/live/podcasts are the categories on the yt site, but not sure if those are all formal objects. 
 
 What's this?:
 
@@ -19,3 +26,4 @@ What's this?:
 ### Eventually
 
 - MCP tools for managing library
+- Ability to supply cookies/auth/whatever to let user get private playlist content. Could you also prevent rate-limiting with this? tube archivist supposedly does this but I've never tried it.

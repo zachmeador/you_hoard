@@ -4,10 +4,12 @@ Subscription management endpoints
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from typing import Optional
 from datetime import datetime
+from apscheduler.triggers.cron import CronTrigger
 
 from app.core.database import Database
 from app.core.downloader import Downloader
 from app.core.security import SessionBearer, SecurityManager
+from app.core.metadata import classify_video_type
 from app.models.subscription import (
     SubscriptionCreate, SubscriptionUpdate,
     SubscriptionResponse, SubscriptionListResponse,
@@ -78,11 +80,27 @@ async def list_subscriptions(
     params.extend([per_page, offset])
     subscriptions = await db.execute(query, tuple(params))
     
-    # Calculate next check time for each subscription
-    # TODO: Implement proper cron parsing
+    # Process subscription data and calculate next check time for each subscription
     for sub in subscriptions:
-        sub['next_check'] = None  # Placeholder
-        sub['new_videos_count'] = 0  # Placeholder
+        # Decode JSON fields
+        if sub.get('subtitle_languages'):
+            sub['subtitle_languages'] = Database.json_decode(sub['subtitle_languages'])
+        if sub.get('audio_tracks'):
+            sub['audio_tracks'] = Database.json_decode(sub['audio_tracks'])
+        if sub.get('content_types'):
+            sub['content_types'] = Database.json_decode(sub['content_types'])
+        if sub.get('extra_metadata'):
+            sub['extra_metadata'] = Database.json_decode(sub['extra_metadata'])
+        
+        try:
+            if sub.get('enabled') and sub.get('check_frequency'):
+                trigger = CronTrigger.from_crontab(sub['check_frequency'])
+                sub['next_check'] = trigger.get_next_fire_time(None, datetime.now())
+            else:
+                sub['next_check'] = None
+        except Exception:
+            # Invalid cron expression
+            sub['next_check'] = None
     
     return SubscriptionListResponse(
         subscriptions=[SubscriptionResponse(**s) for s in subscriptions],
@@ -153,6 +171,8 @@ async def create_subscription(
         sub_data['subtitle_languages'] = Database.json_encode(sub_data['subtitle_languages'])
     if sub_data.get('audio_tracks'):
         sub_data['audio_tracks'] = Database.json_encode(sub_data['audio_tracks'])
+    if sub_data.get('content_types'):
+        sub_data['content_types'] = Database.json_encode(sub_data['content_types'])
     if sub_data.get('extra_metadata'):
         sub_data['extra_metadata'] = Database.json_encode(sub_data['extra_metadata'])
     
@@ -194,12 +214,21 @@ async def get_subscription(
         subscription['subtitle_languages'] = Database.json_decode(subscription['subtitle_languages'])
     if subscription.get('audio_tracks'):
         subscription['audio_tracks'] = Database.json_decode(subscription['audio_tracks'])
+    if subscription.get('content_types'):
+        subscription['content_types'] = Database.json_decode(subscription['content_types'])
     if subscription.get('extra_metadata'):
         subscription['extra_metadata'] = Database.json_decode(subscription['extra_metadata'])
     
-    # Add placeholders
-    subscription['next_check'] = None  # TODO: Calculate from cron
-    subscription['new_videos_count'] = 0  # TODO: Count new videos
+    # Calculate next check time
+    try:
+        if subscription.get('enabled') and subscription.get('check_frequency'):
+            trigger = CronTrigger.from_crontab(subscription['check_frequency'])
+            subscription['next_check'] = trigger.get_next_fire_time(None, datetime.now())
+        else:
+            subscription['next_check'] = None
+    except Exception:
+        # Invalid cron expression
+        subscription['next_check'] = None
     
     return SubscriptionResponse(**subscription)
 
@@ -234,6 +263,8 @@ async def update_subscription(
             update_data['subtitle_languages'] = Database.json_encode(update_data['subtitle_languages'])
         if 'audio_tracks' in update_data:
             update_data['audio_tracks'] = Database.json_encode(update_data['audio_tracks'])
+        if 'content_types' in update_data:
+            update_data['content_types'] = Database.json_encode(update_data['content_types'])
         if 'extra_metadata' in update_data:
             update_data['extra_metadata'] = Database.json_encode(update_data['extra_metadata'])
         
@@ -322,10 +353,32 @@ async def check_subscription(
         # Get list of videos
         entries = info.get('entries', [])
         
-        for entry in entries[:20]:  # Check only recent 20 videos
+        # Get subscription's content type preferences
+        subscription_content_types = subscription.get('content_types', ['video'])
+        if isinstance(subscription_content_types, str):
+            subscription_content_types = Database.json_decode(subscription_content_types)
+        
+        # Calculate fetch limit to ensure we get enough videos after filtering
+        # If user wants all content types, use their limit directly
+        # Otherwise, fetch extra to account for filtering
+        desired_count = subscription.get('latest_n_videos', 20)
+        if len(subscription_content_types) >= 3:  # All content types
+            fetch_limit = desired_count
+        else:
+            # Fetch 3-5x more to account for filtering, max 200 for performance
+            fetch_limit = min(desired_count * 4, 200)
+        
+        # Process videos and apply content filtering
+        matched_videos = []
+        for entry in entries[:fetch_limit]:
             video_id = entry.get('id')
             if not video_id:
                 continue
+            
+            # Classify video type and check if it's wanted by this subscription
+            video_type = classify_video_type(entry)
+            if video_type not in subscription_content_types:
+                continue  # Skip this video - not wanted by subscription
             
             # Check if video already exists
             existing = await db.execute_one(
@@ -334,30 +387,62 @@ async def check_subscription(
             )
             
             if not existing:
-                # Add new video
-                try:
-                    await db.insert("videos", {
-                        "youtube_id": video_id,
-                        "channel_id": subscription['channel_id'],
-                        "title": entry.get('title', 'Unknown Title'),
-                        "description": entry.get('description'),
-                        "duration": entry.get('duration'),
-                        "upload_date": entry.get('upload_date'),
-                        "download_status": "pending",
-                        "created_at": datetime.utcnow().isoformat(),
-                        "updated_at": datetime.utcnow().isoformat()
-                    })
-                    new_videos.append({
-                        "youtube_id": video_id,
-                        "title": entry.get('title')
-                    })
-                except Exception as e:
-                    errors.append(f"Failed to add video {video_id}: {str(e)}")
+                # Add this video to our matched list
+                matched_videos.append({
+                    'entry': entry,
+                    'video_id': video_id, 
+                    'video_type': video_type
+                })
+                
+                # Stop when we have enough matching videos
+                if len(matched_videos) >= desired_count:
+                    break
         
-        # Update last check time
+        # Now process the matched videos (up to desired count)
+        for video_data in matched_videos[:desired_count]:
+            entry = video_data['entry']
+            video_id = video_data['video_id']
+            video_type = video_data['video_type']
+            
+            try:
+                video_db_id = await db.insert("videos", {
+                    "youtube_id": video_id,
+                    "channel_id": subscription['channel_id'],
+                    "title": entry.get('title', 'Unknown Title'),
+                    "description": entry.get('description'),
+                    "duration": entry.get('duration'),
+                    "upload_date": entry.get('upload_date'),
+                    "video_type": video_type,
+                    "download_status": "pending",
+                    "created_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.utcnow().isoformat()
+                })
+                
+                # Auto-queue for download if enabled
+                if subscription.get('auto_download', True):
+                    try:
+                        await downloader.queue_download(
+                            video_db_id, 
+                            priority=1,  # Manual checks get priority 1
+                            quality=subscription.get('quality_preference', '720p')
+                        )
+                    except Exception as e:
+                        errors.append(f"Failed to queue video {video_id}: {str(e)}")
+                
+                new_videos.append({
+                    "youtube_id": video_id,
+                    "title": entry.get('title')
+                })
+            except Exception as e:
+                errors.append(f"Failed to add video {video_id}: {str(e)}")
+        
+        # Update last check time and new videos count
         await db.update(
             "subscriptions",
-            {"last_check": datetime.utcnow().isoformat()},
+            {
+                "last_check": datetime.utcnow().isoformat(),
+                "new_videos_count": len(new_videos)
+            },
             "id = ?",
             (subscription_id,)
         )

@@ -11,7 +11,7 @@ import logging
 
 from app.core.database import Database
 from app.core.config import settings
-from app.core.metadata import MetadataManager
+from app.core.metadata import MetadataManager, classify_video_type
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +206,7 @@ class RecoveryManager:
             try:
                 # Extract info from app metadata structure
                 video_file = self._find_video_file(video_dir)
+                thumbnail_file = self._find_thumbnail_file(video_dir)
                 
                 return {
                     'youtube_id': app_metadata.video.get('youtube_id', ''),
@@ -218,6 +219,9 @@ class RecoveryManager:
                     'quality': self._get_quality_from_technical(app_metadata.technical),
                     'file_path': app_metadata.app.get('file_path') or (str(video_file.relative_to(self.storage_path)) if video_file else None),
                     'file_size': app_metadata.app.get('file_size') or (video_file.stat().st_size if video_file and video_file.exists() else None),
+                    'thumbnail_path': app_metadata.app.get('thumbnail_path') or (str(thumbnail_file.relative_to(self.storage_path)) if thumbnail_file else None),
+                    'thumbnail_generated': app_metadata.app.get('thumbnail_generated', False),
+                    'thumbnail_timestamp': app_metadata.app.get('thumbnail_timestamp'),
                     'directory_path': video_dir,
                     'source': 'app_metadata'
                 }
@@ -235,8 +239,9 @@ class RecoveryManager:
                 with open(info_file, 'r', encoding='utf-8') as f:
                     info = json.load(f)
                     
-                    # Find video file
+                    # Find video file and thumbnail file
                     video_file = self._find_video_file(video_dir)
+                    thumbnail_file = self._find_thumbnail_file(video_dir)
                     
                     return {
                         'youtube_id': info.get('id', ''),
@@ -249,6 +254,9 @@ class RecoveryManager:
                         'quality': info.get('height', ''),
                         'file_path': str(video_file.relative_to(self.storage_path)) if video_file else None,
                         'file_size': video_file.stat().st_size if video_file and video_file.exists() else None,
+                        'thumbnail_path': str(thumbnail_file.relative_to(self.storage_path)) if thumbnail_file else None,
+                        'thumbnail_generated': False,  # Assume downloaded thumbnails are not generated
+                        'thumbnail_timestamp': None,
                         'directory_path': video_dir,
                         'source': 'ytdlp_metadata'
                     }
@@ -259,9 +267,13 @@ class RecoveryManager:
         video_info = self._parse_video_from_dirname(video_dir.name)
         if video_info:
             video_file = self._find_video_file(video_dir)
+            thumbnail_file = self._find_thumbnail_file(video_dir)
             video_info.update({
                 'file_path': str(video_file.relative_to(self.storage_path)) if video_file else None,
                 'file_size': video_file.stat().st_size if video_file and video_file.exists() else None,
+                'thumbnail_path': str(thumbnail_file.relative_to(self.storage_path)) if thumbnail_file else None,
+                'thumbnail_generated': False,
+                'thumbnail_timestamp': None,
                 'directory_path': video_dir,
                 'source': 'directory_name'
             })
@@ -300,6 +312,25 @@ class RecoveryManager:
         
         for file_path in video_dir.iterdir():
             if file_path.is_file() and file_path.suffix.lower() in video_extensions:
+                return file_path
+        
+        return None
+    
+    def _find_thumbnail_file(self, video_dir: Path) -> Optional[Path]:
+        """
+        Find thumbnail file in video directory
+        """
+        thumbnail_extensions = {'.jpg', '.jpeg', '.png', '.webp'}
+        
+        for file_path in video_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in thumbnail_extensions:
+                # Prioritize files with "thumbnail" in the name
+                if 'thumbnail' in file_path.name.lower():
+                    return file_path
+        
+        # If no explicit thumbnail file, look for any image file
+        for file_path in video_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in thumbnail_extensions:
                 return file_path
         
         return None
@@ -384,6 +415,14 @@ class RecoveryManager:
             (video_info['youtube_id'],)
         )
         
+        # Determine video type from available metadata or classify from raw info
+        video_type = video_info.get('video_type')
+        if not video_type and 'raw_metadata' in video_info:
+            # Use raw yt-dlp metadata for classification if available
+            video_type = classify_video_type(video_info['raw_metadata'])
+        if not video_type:
+            video_type = 'video'  # Default fallback
+        
         video_data = {
             'youtube_id': video_info['youtube_id'],
             'channel_id': video_info['channel_id'],
@@ -394,8 +433,12 @@ class RecoveryManager:
             'view_count': video_info.get('view_count'),
             'like_count': video_info.get('like_count'),
             'quality': video_info.get('quality'),
+            'video_type': video_type,
             'file_path': video_info.get('file_path'),
             'file_size': video_info.get('file_size'),
+            'thumbnail_path': video_info.get('thumbnail_path'),
+            'thumbnail_generated': video_info.get('thumbnail_generated', False),
+            'thumbnail_timestamp': video_info.get('thumbnail_timestamp'),
             'download_status': 'completed' if video_info.get('file_path') else 'pending',
             'updated_at': datetime.now()
         }

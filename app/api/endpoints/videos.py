@@ -11,6 +11,7 @@ import mimetypes
 from app.core.config import settings
 from app.core.database import Database
 from app.core.downloader import Downloader
+from app.core.metadata import classify_video_type
 from app.core.quality import QualityService
 from app.core.security import SessionBearer, SecurityManager
 from app.models.video import (
@@ -229,6 +230,7 @@ async def create_video(
         "upload_date": info.get('upload_date'),
         "view_count": info.get('view_count'),
         "like_count": info.get('like_count'),
+        "video_type": classify_video_type(info),
         "download_status": "pending",
         "created_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat()

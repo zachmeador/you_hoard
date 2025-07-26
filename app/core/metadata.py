@@ -1,46 +1,67 @@
 """
-Metadata management for YouHoard
-Handles parsing yt-dlp metadata into stable app format
+Video metadata handling and parsing
 """
+
 import json
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Any, Optional
 import logging
+from pathlib import Path
+from dataclasses import dataclass, asdict
+from typing import Dict, Any, Optional, List, Literal
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Video type enumeration
+VideoType = Literal['video', 'short', 'live']
 
+@dataclass
 class VideoMetadata:
-    """Stable app metadata structure for videos"""
-    
-    def __init__(self):
-        self.app: Dict[str, Any] = {}
-        self.video: Dict[str, Any] = {}
-        self.channel: Dict[str, Any] = {}
-        self.technical: Dict[str, Any] = {}
-        self.content: Dict[str, Any] = {}
+    """Structured video metadata"""
+    app: Dict[str, Any]
+    video: Dict[str, Any] 
+    channel: Dict[str, Any]
+    technical: Dict[str, Any]
+    content: Dict[str, Any]
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
-        return {
-            'app': self.app,
-            'video': self.video,
-            'channel': self.channel,
-            'technical': self.technical,
-            'content': self.content
-        }
+        return asdict(self)
+
+
+def classify_video_type(ytdlp_info: Dict[str, Any]) -> VideoType:
+    """
+    Classify video type based on yt-dlp metadata
     
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'VideoMetadata':
-        """Create from dictionary loaded from JSON"""
-        metadata = cls()
-        metadata.app = data.get('app', {})
-        metadata.video = data.get('video', {})
-        metadata.channel = data.get('channel', {})
-        metadata.technical = data.get('technical', {})
-        metadata.content = data.get('content', {})
-        return metadata
+    Args:
+        ytdlp_info: Video metadata from yt-dlp
+        
+    Returns:
+        VideoType: 'live', 'short', or 'video'
+    """
+    # Live content takes highest priority
+    if ytdlp_info.get('is_live'):
+        return 'live'
+    
+    live_status = ytdlp_info.get('live_status', '')
+    if live_status in ('is_live', 'is_upcoming'):
+        return 'live'
+    
+    # Check for shorts based on aspect ratio
+    width = ytdlp_info.get('width', 0)
+    height = ytdlp_info.get('height', 0)
+    
+    if height > 0 and width > 0:
+        aspect_ratio = width / height
+        # Vertical videos (aspect ratio < 1.0) are likely shorts
+        if aspect_ratio < 1.0:
+            return 'short'
+    
+    # Also check duration as secondary indicator for shorts
+    duration = ytdlp_info.get('duration', 0)
+    if duration and duration <= 60 and width and height and width < height:
+        return 'short'
+    
+    # Default to regular video
+    return 'video'
 
 
 class MetadataManager:
@@ -54,14 +75,12 @@ class MetadataManager:
         """
         Parse yt-dlp info.json into stable app metadata format
         """
-        metadata = VideoMetadata()
-        
         # App-specific metadata
         now = datetime.utcnow().isoformat() + 'Z'
         video_file = cls._find_video_file(video_dir)
         thumbnail_file = cls._find_thumbnail_file(video_dir)
         
-        metadata.app = {
+        app_metadata = {
             'version': cls.APP_METADATA_VERSION,
             'created_at': now,
             'updated_at': now,
@@ -69,11 +88,12 @@ class MetadataManager:
             'file_path': str(video_file.relative_to(storage_root)) if video_file else None,
             'file_size': video_file.stat().st_size if video_file and video_file.exists() else None,
             'thumbnail_path': str(thumbnail_file.relative_to(storage_root)) if thumbnail_file else None,
-            'source': 'yt-dlp'
+            'source': 'yt-dlp',
+            'video_type': classify_video_type(ytdlp_info)  # Add classification
         }
         
         # Core video metadata
-        metadata.video = {
+        video_metadata = {
             'youtube_id': ytdlp_info.get('id', ''),
             'title': ytdlp_info.get('title', ''),
             'fulltitle': ytdlp_info.get('fulltitle', ''),
@@ -86,11 +106,12 @@ class MetadataManager:
             'like_count': ytdlp_info.get('like_count'),
             'comment_count': ytdlp_info.get('comment_count'),
             'webpage_url': ytdlp_info.get('webpage_url', ''),
-            'display_id': ytdlp_info.get('display_id', '')
+            'display_id': ytdlp_info.get('display_id', ''),
+            'video_type': classify_video_type(ytdlp_info)  # Add to video metadata too
         }
         
         # Channel metadata
-        metadata.channel = {
+        channel_metadata = {
             'youtube_id': ytdlp_info.get('channel_id', ''),
             'name': ytdlp_info.get('channel', '') or ytdlp_info.get('uploader', ''),
             'uploader': ytdlp_info.get('uploader', ''),
@@ -102,7 +123,7 @@ class MetadataManager:
         }
         
         # Technical metadata
-        metadata.technical = {
+        technical_metadata = {
             'format': ytdlp_info.get('ext', ''),
             'format_id': ytdlp_info.get('format_id', ''),
             'format_note': ytdlp_info.get('format_note', ''),
@@ -125,7 +146,7 @@ class MetadataManager:
         }
         
         # Content metadata
-        metadata.content = {
+        content_metadata = {
             'categories': ytdlp_info.get('categories', []),
             'tags': ytdlp_info.get('tags', []),
             'availability': ytdlp_info.get('availability', ''),
@@ -139,7 +160,13 @@ class MetadataManager:
             'automatic_captions': cls._extract_subtitle_languages(ytdlp_info.get('automatic_captions', {}))
         }
         
-        return metadata
+        return VideoMetadata(
+            app=app_metadata,
+            video=video_metadata, 
+            channel=channel_metadata,
+            technical=technical_metadata,
+            content=content_metadata
+        )
     
     @classmethod
     def save_metadata(cls, metadata: VideoMetadata, video_dir: Path) -> bool:
@@ -165,7 +192,13 @@ class MetadataManager:
             with open(metadata_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            return VideoMetadata.from_dict(data)
+            return VideoMetadata(
+                app=data.get('app', {}),
+                video=data.get('video', {}),
+                channel=data.get('channel', {}),
+                technical=data.get('technical', {}),
+                content=data.get('content', {})
+            )
         except Exception as e:
             logger.warning(f"Failed to load metadata from {video_dir}: {str(e)}")
             return None

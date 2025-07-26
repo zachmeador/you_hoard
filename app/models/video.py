@@ -2,9 +2,11 @@
 Video models and schemas
 """
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
+# Video type enumeration
+VideoType = Literal['video', 'short', 'live']
 
 class VideoBase(BaseModel):
     """Base video schema"""
@@ -17,6 +19,7 @@ class VideoBase(BaseModel):
     view_count: Optional[int] = None
     like_count: Optional[int] = None
     quality: Optional[str] = None
+    video_type: VideoType = 'video'
     thumbnail_path: Optional[str] = None
     thumbnail_generated: bool = False
     thumbnail_timestamp: Optional[float] = None
@@ -44,6 +47,7 @@ class VideoCreate(BaseModel):
     view_count: Optional[int] = None
     like_count: Optional[int] = None
     quality: Optional[str] = None
+    video_type: VideoType = 'video'
     thumbnail_path: Optional[str] = None
     thumbnail_generated: bool = False
     thumbnail_timestamp: Optional[float] = None
@@ -66,6 +70,7 @@ class VideoUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     quality: Optional[str] = None
+    video_type: Optional[VideoType] = None
     extra_metadata: Optional[Dict[str, Any]] = None
 
 
