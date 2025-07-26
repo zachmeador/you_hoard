@@ -3,7 +3,7 @@ Subscription models and schemas
 """
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 class SubscriptionBase(BaseModel):
@@ -18,7 +18,8 @@ class SubscriptionBase(BaseModel):
     audio_tracks: Optional[List[str]] = None
     check_frequency: str = "0 * * * *"  # Cron expression
     
-    @validator('check_frequency')
+    @field_validator('check_frequency')
+    @classmethod
     def validate_cron(cls, v):
         # Basic cron validation (could be more sophisticated)
         parts = v.split()
@@ -50,8 +51,7 @@ class SubscriptionInDB(SubscriptionBase):
     extra_metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SubscriptionResponse(SubscriptionInDB):

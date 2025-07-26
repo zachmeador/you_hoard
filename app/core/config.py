@@ -1,5 +1,5 @@
 """
-Configuration management for You Hoard
+Configuration management for YouHoard
 """
 from pathlib import Path
 from typing import Optional
@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     )
     
     # Database settings
-    DATABASE_PATH: str = "you_hoard.db"
+    DATABASE_PATH: str = "youhoard.db"
     
     # Storage settings
     STORAGE_PATH: str = "./storage"

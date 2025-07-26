@@ -1,5 +1,5 @@
 """
-Metadata management for You Hoard
+Metadata management for YouHoard
 Handles parsing yt-dlp metadata into stable app format
 """
 import json

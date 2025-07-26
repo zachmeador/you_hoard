@@ -50,7 +50,7 @@ On first run, the app will:
 # First-run setup
 async def initial_setup():
     if not await has_password_configured():
-        print("Welcome to You Hoard!")
+        print("Welcome to YouHoard!")
         password = getpass("Set your password: ")
         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
         await save_password_hash(password_hash)

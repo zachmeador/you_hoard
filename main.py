@@ -1,5 +1,5 @@
 """
-You Hoard - Main FastAPI Application
+YouHoard - Main FastAPI Application
 """
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     pass
 
 app = FastAPI(
-    title="You Hoard",
+    title="YouHoard",
     description="Personal YouTube archive application",
     version="0.1.0",
     lifespan=lifespan
@@ -71,6 +71,11 @@ static_path = "app/static"
 if os.path.exists(static_path):
     app.mount("/app/static", StaticFiles(directory=static_path), name="static")
 
+# Mount storage files (for thumbnails and videos)
+storage_path = settings.get_storage_path()
+if storage_path.exists():
+    app.mount("/storage", StaticFiles(directory=str(storage_path)), name="storage")
+
 # Mount Svelte build files
 dist_path = "app/static/dist"
 if os.path.exists(dist_path):
@@ -79,7 +84,7 @@ if os.path.exists(dist_path):
 # Health check endpoint (must be before catch-all route)
 @app.get("/api/health")
 async def health_check():
-    return {"status": "healthy", "message": "You Hoard is running"}
+    return {"status": "healthy", "message": "YouHoard is running"}
 
 # Serve the Svelte app for all non-API routes
 @app.get("/{full_path:path}")

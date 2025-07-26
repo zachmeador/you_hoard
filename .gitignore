@@ -48,9 +48,9 @@ coverage.xml
 *.cover
 .hypothesis/
 
-# You Hoard specific
-you_hoard.db
-you_hoard.db-journal
+# YouHoard specific
+youhoard.db
+youhoard.db-journal
 storage/
 logs/
 *.log

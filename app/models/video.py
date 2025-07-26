@@ -3,7 +3,7 @@ Video models and schemas
 """
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 
 class VideoBase(BaseModel):
@@ -21,7 +21,8 @@ class VideoBase(BaseModel):
     thumbnail_generated: bool = False
     thumbnail_timestamp: Optional[float] = None
     
-    @validator('youtube_id')
+    @field_validator('youtube_id')
+    @classmethod
     def validate_youtube_id(cls, v):
         if not v or len(v) != 11:
             raise ValueError('Invalid YouTube video ID')
@@ -47,14 +48,17 @@ class VideoCreate(BaseModel):
     thumbnail_generated: bool = False
     thumbnail_timestamp: Optional[float] = None
     
-    @validator('youtube_id', always=True)
-    def validate_input(cls, v, values):
-        url = values.get('url')
-        if not url and not v:
-            raise ValueError('Either url or youtube_id must be provided')
-        if url and v:
-            raise ValueError('Provide either url or youtube_id, not both')
-        return v
+    @model_validator(mode='before')
+    @classmethod
+    def validate_input(cls, data):
+        if isinstance(data, dict):
+            url = data.get('url')
+            youtube_id = data.get('youtube_id')
+            if not url and not youtube_id:
+                raise ValueError('Either url or youtube_id must be provided')
+            if url and youtube_id:
+                raise ValueError('Provide either url or youtube_id, not both')
+        return data
 
 
 class VideoUpdate(BaseModel):
@@ -75,14 +79,21 @@ class VideoInDB(VideoBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VideoResponse(VideoInDB):
     """Video response schema"""
     channel_name: Optional[str] = None
     tags: List[Dict[str, Any]] = []
+    thumbnail_url: Optional[str] = None
+    
+    @model_validator(mode='after')
+    def set_thumbnail_url(self):
+        """Set thumbnail_url from thumbnail_path"""
+        if self.thumbnail_path:
+            self.thumbnail_url = f"/storage/{self.thumbnail_path}"
+        return self
 
 
 class VideoListResponse(BaseModel):

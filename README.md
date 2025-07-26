@@ -4,6 +4,8 @@ A youtube archiver app that cares about simplicity and feature richness.
 
 `youhoard` uses sqlite, fastapi, and yt-dlp. No need to spin up redis, elasticsearch, kubernetes, or terraform a new data center just to have a webapp that makes yt archiving easier. 
 
+<img src="docs/video_page.png" alt="YouHoard Interface" width="600">
+
 ## Current status
 
 Version: 0.0.1

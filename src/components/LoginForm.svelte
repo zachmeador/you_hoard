@@ -26,7 +26,7 @@
 <div class="login-container">
   <div class="login-card">
     <div class="login-header">
-      <h1>You Hoard</h1>
+      <h1>YouHoard</h1>
       <p>Please log in to continue</p>
     </div>
     

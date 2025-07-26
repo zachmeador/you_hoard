@@ -1,5 +1,5 @@
 """
-Security utilities for You Hoard
+Security utilities for YouHoard
 """
 from datetime import datetime, timedelta
 from typing import Optional

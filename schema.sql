@@ -1,4 +1,4 @@
--- You Hoard Database Schema
+-- YouHoard Database Schema
 
 -- Channels table
 CREATE TABLE IF NOT EXISTS channels (

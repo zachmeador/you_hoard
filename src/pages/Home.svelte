@@ -85,7 +85,7 @@
 
 <div class="page-header">
   <h1 class="page-title">Dashboard</h1>
-  <p class="page-subtitle">Welcome to You Hoard - Your personal YouTube archive</p>
+  <p class="page-subtitle">Welcome to YouHoard - Your personal YouTube archive</p>
 </div>
 
 <!-- Stats Grid -->

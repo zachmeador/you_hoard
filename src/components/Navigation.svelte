@@ -77,7 +77,7 @@
   <div class="nav-container">
     <div class="nav-brand">
       <a href="/" class="nav-logo" use:link on:mouseenter={handleLogoHover}>
-        You Hoard
+        YouHoard
       </a>
     </div>
     

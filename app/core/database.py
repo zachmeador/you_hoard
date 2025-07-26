@@ -1,5 +1,5 @@
 """
-Database management for You Hoard using aiosqlite
+Database management for YouHoard using aiosqlite
 """
 import json
 from typing import Any, Dict, List, Optional

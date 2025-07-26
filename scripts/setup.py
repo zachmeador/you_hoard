@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Setup script for You Hoard development environment"""
+"""Setup script for YouHoard development environment"""
 
 import subprocess
 import httpx
@@ -10,11 +10,11 @@ async def setup():
     """Set up fresh development environment"""
     
     # Check if database already exists (contains user auth data)
-    db_path = Path("you_hoard.db")
+    db_path = Path("youhoard.db")
     has_existing_db = db_path.exists()
     
     if has_existing_db:
-        print("📊 Existing database detected (you_hoard.db)")
+        print("📊 Existing database detected (youhoard.db)")
         print("🔄 App will automatically perform recovery on startup")
     
     # Install dependencies

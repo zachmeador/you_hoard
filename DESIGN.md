@@ -1,8 +1,8 @@
-# You Hoard - Design Document
+# YouHoard - Design Document
 
 ## Overview
 
-You Hoard is a self-hosted YouTube archiving application designed to be simple, lightweight, and effective. Unlike TubeArchivist which uses complex infrastructure (Elasticsearch, Redis), You Hoard keeps it simple with FastAPI, SQLite, and proven downloading libraries.
+YouHoard is a self-hosted YouTube archiving application designed to be simple, lightweight, and effective. Unlike TubeArchivist which uses complex infrastructure (Elasticsearch, Redis), YouHoard keeps it simple with FastAPI, SQLite, and proven downloading libraries.
 
 **Target User**: Single user running a LAN web application for personal YouTube archiving.
 
@@ -173,7 +173,7 @@ CREATE TABLE users (
 
 ### Application Structure
 ```
-you_hoard/
+youhoard/
 ├── app/
 │   ├── api/
 │   │   ├── endpoints/

@@ -4,7 +4,7 @@
 
 <div class="page-header">
   <h1 class="page-title">Settings</h1>
-  <p class="page-subtitle">Configure your You Hoard application</p>
+  <p class="page-subtitle">Configure your YouHoard application</p>
 </div>
 
 <div class="card">

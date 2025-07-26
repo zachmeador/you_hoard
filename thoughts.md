@@ -18,7 +18,7 @@ keep it simple. tubearchivist is using elasticsearch and redis? bro
 
 platform source: for now just youtube, but could make extensible for other sites for later on
 
-user can schedule you_hoard to watch channels and/or playlists for new content
+user can schedule youhoard to watch channels and/or playlists for new content
 
 user can specify the encoding settings and such, passed down to the dler library
 

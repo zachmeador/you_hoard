@@ -1,5 +1,5 @@
 """
-Auto-recovery and migration system for You Hoard
+Auto-recovery and migration system for YouHoard
 Scans storage directory and rebuilds database from existing video files
 """
 import json

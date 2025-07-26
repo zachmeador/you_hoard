@@ -1,8 +1,8 @@
-# You Hoard Implementation Plan
+# YouHoard Implementation Plan
 
 ## Overview
 
-This document outlines the implementation plan for You Hoard, a self-hosted YouTube archiving application. The plan is organized into phases, starting with core infrastructure and progressively adding features.
+This document outlines the implementation plan for YouHoard, a self-hosted YouTube archiving application. The plan is organized into phases, starting with core infrastructure and progressively adding features.
 
 ## 📈 **Current Status: FULL STACK COMPLETE**
 
@@ -385,7 +385,7 @@ The Minimum Viable Product includes:
 - Real-time updates and progress tracking
 - Comprehensive management capabilities
 
-**⚠️ Near Complete:** You Hoard is a highly functional YouTube archiving application, but download management has critical gaps that need immediate attention.
+**⚠️ Near Complete:** YouHoard is a highly functional YouTube archiving application, but download management has critical gaps that need immediate attention.
 
 ## Future Considerations
 
@@ -430,7 +430,7 @@ The Minimum Viable Product includes:
 ### Development Commands:
 ```bash
 # Start server (if not running)
-cd /path/to/you_hoard
+cd /path/to/youhoard
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 # Create first user (via API) - ✅ COMPLETED

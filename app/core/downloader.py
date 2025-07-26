@@ -64,7 +64,10 @@ class Downloader:
         
         opts = {
             'format': settings.FORMAT_SELECTOR,
-            'outtmpl': str(output_path / 'video.%(ext)s'),
+            'outtmpl': {
+                'default': str(output_path / 'video.%(ext)s'),
+                'thumbnail': str(output_path / 'thumbnail.%(ext)s'),
+            },
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
@@ -90,6 +93,13 @@ class Downloader:
                 'key': 'FFmpegEmbedSubtitle',
                 'already_have_subtitle': False
             })
+        
+        # Convert thumbnails to JPG format
+        opts['postprocessors'].append({
+            'key': 'FFmpegThumbnailsConvertor',
+            'format': 'jpg',
+            'when': 'before_dl'
+        })
         
         if progress_hook:
             opts['progress_hooks'] = [progress_hook]
@@ -269,12 +279,13 @@ class Downloader:
 
     async def _find_existing_thumbnails(self, output_dir: Path) -> Optional[str]:
         """Find existing yt-dlp thumbnail files and return relative path from storage root."""
+        # Check JPG first since we convert to JPG
         for ext in ('.jpg', '.jpeg', '.png', '.webp'):
             thumbnail_file = output_dir / f'thumbnail{ext}'
             if thumbnail_file.exists():
                 # Return relative path from storage root
                 return str(thumbnail_file.relative_to(settings.get_storage_path()))
-        return None 
+        return None
     
     async def _create_app_metadata(self, output_dir: Path) -> bool:
         """Create app metadata file from yt-dlp info.json"""
