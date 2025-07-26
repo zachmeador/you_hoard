@@ -372,6 +372,31 @@ you_hoard/
 - **Input Validation**: Sanitize URLs, tags, and metadata to prevent errors or exploits.
 - **Logging**: Centralize in `logs/download.log`; add `/api/logs` endpoint for recent entries on home page.
 
+## Auto-Recovery & Migration
+
+### Purpose
+When the app initializes pointing to a storage directory containing an existing video library, it needs to rebuild the database and properly recognize the video collection.
+
+### Approach
+**Discovery Phase**
+- Scan storage directory for `channels/{channel_dir}/{video_dir}/` structure
+- Inventory existing files (video files, info.json, channel_info.json)
+
+**Metadata Extraction (Simple Fallback Chain)**
+- **Primary**: Read existing `info.json` and `channel_info.json` files
+- **Secondary**: Parse YouTube IDs from directory names (e.g., `UCxxxxxx_ChannelName`, `video-id_title`)
+- **Fallback**: Use basic file system info (file size, modification dates) and sensible defaults
+
+**Database Reconstruction**
+- Create channel/video records with available data
+- Use `download_status='completed'` for existing video files
+- Fill missing fields with defaults (empty strings, null dates, etc.)
+
+**Implementation**
+- Single module: `app/core/recovery.py`
+- Automatic on startup if database is empty
+- Idempotent and non-destructive (safe to run multiple times)
+
 ## Future Extensibility
 
 - Plugin system for additional video platforms

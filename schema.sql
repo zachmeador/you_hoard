@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS videos (
     file_size INTEGER, -- bytes
     download_status TEXT CHECK(download_status IN ('pending', 'downloading', 'completed', 'failed', 'deleted')) DEFAULT 'pending',
     quality TEXT, -- e.g., "1080p", "720p"
+    thumbnail_path TEXT, -- relative path to thumbnail file
+    thumbnail_generated BOOLEAN DEFAULT FALSE, -- whether thumbnail was generated from video
+    thumbnail_timestamp REAL, -- timestamp in seconds for generated thumbnails
     extra_metadata TEXT, -- JSON object for arbitrary future metadata
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

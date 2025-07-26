@@ -11,15 +11,34 @@ import os
 
 from app.core.config import settings
 from app.core.database import Database
+from app.core.recovery import RecoveryManager
 from app.api.endpoints import auth, videos, channels, subscriptions, downloads
+import logging
 
 # Create database tables
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    logger = logging.getLogger(__name__)
     db = Database(settings.DATABASE_PATH)
     await db.init_db()
     app.state.db = db
+    
+    # Auto-recovery on startup if database is empty
+    try:
+        recovery_manager = RecoveryManager(db)
+        if await recovery_manager.check_database_empty():
+            logger.info("Database is empty, attempting auto-recovery from storage...")
+            result = await recovery_manager.scan_and_recover()
+            if result.channels_created > 0 or result.videos_created > 0:
+                logger.info(f"Auto-recovery completed: {result.channels_created} channels, {result.videos_created} videos recovered")
+            else:
+                logger.info("Auto-recovery completed: no existing content found in storage")
+        else:
+            logger.info("Database contains data, skipping auto-recovery")
+    except Exception as e:
+        logger.error(f"Auto-recovery failed: {str(e)}")
+    
     yield
     # Shutdown
     pass

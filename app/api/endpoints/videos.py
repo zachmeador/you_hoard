@@ -1,19 +1,21 @@
 """
 Video management endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from typing import Optional, List
+from pathlib import Path
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
 from datetime import datetime
+import mimetypes
 
+from app.core.config import settings
 from app.core.database import Database
 from app.core.downloader import Downloader
 from app.core.security import SessionBearer, SecurityManager
 from app.models.video import (
-    VideoCreate, VideoUpdate, VideoResponse, 
-    VideoListResponse, VideoDownloadRequest,
-    VideoBulkOperation
+    VideoCreate, VideoUpdate, VideoResponse, VideoListResponse, 
+    VideoDownloadRequest, VideoBulkOperation
 )
-
 
 router = APIRouter()
 
@@ -400,3 +402,38 @@ async def bulk_operation(
             results["errors"].append({"video_id": video_id, "error": str(e)})
     
     return results 
+
+
+@router.get("/{video_id}/thumbnail")
+async def get_video_thumbnail(
+    video_id: int,
+    db: Database = Depends(get_db)
+):
+    """Get video thumbnail"""
+    video = await db.execute_one(
+        "SELECT thumbnail_path, youtube_id FROM videos WHERE id = ?",
+        (video_id,)
+    )
+    
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    if not video['thumbnail_path']:
+        raise HTTPException(status_code=404, detail="Thumbnail not available")
+    
+    # Construct full path
+    thumbnail_path = settings.get_storage_path() / video['thumbnail_path']
+    
+    if not thumbnail_path.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail file not found")
+    
+    # Determine content type
+    content_type, _ = mimetypes.guess_type(str(thumbnail_path))
+    if not content_type:
+        content_type = "image/jpeg"
+    
+    return FileResponse(
+        path=str(thumbnail_path),
+        media_type=content_type,
+        filename=f"{video['youtube_id']}_thumbnail.{thumbnail_path.suffix[1:]}"
+    ) 

@@ -42,6 +42,19 @@ class Settings(BaseSettings):
     WRITE_INFO_JSON: bool = True
     WRITE_THUMBNAIL: bool = True
     
+    # Format compatibility settings (prioritize compatibility over quality)
+    MERGE_OUTPUT_FORMAT: str = "mp4"  # Always merge to MP4 container
+    REMUX_VIDEO: str = "mp4"  # Force MP4 output format
+    FORMAT_SORT: list[str] = [
+        "vcodec:h264",    # Prefer H.264 (most compatible)
+        "lang",           # Language preference
+        "quality",        # Quality preference  
+        "res",            # Resolution preference
+        "fps",            # Frame rate preference
+        "hdr:12",         # Prefer non-HDR for compatibility
+        "acodec:aac"      # Prefer AAC audio (most compatible)
+    ]
+    
     # Security settings
     SECRET_KEY: str = "your-secret-key-here-change-in-production"
     SESSION_EXPIRE_MINUTES: int = 43200  # 30 days

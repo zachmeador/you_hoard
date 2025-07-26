@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently \"uv run main.py\" \"vite\" --names \"backend,frontend\" --prefix-colors \"blue,green\"",
+    "dev:frontend": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.0.0",
+    "concurrently": "^8.2.2",
     "svelte": "^4.2.0",
     "svelte-check": "^3.6.0",
     "typescript": "^5.2.0",

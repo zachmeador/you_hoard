@@ -17,6 +17,9 @@ class VideoBase(BaseModel):
     view_count: Optional[int] = None
     like_count: Optional[int] = None
     quality: Optional[str] = None
+    thumbnail_path: Optional[str] = None
+    thumbnail_generated: bool = False
+    thumbnail_timestamp: Optional[float] = None
     
     @validator('youtube_id')
     def validate_youtube_id(cls, v):
@@ -40,6 +43,9 @@ class VideoCreate(BaseModel):
     view_count: Optional[int] = None
     like_count: Optional[int] = None
     quality: Optional[str] = None
+    thumbnail_path: Optional[str] = None
+    thumbnail_generated: bool = False
+    thumbnail_timestamp: Optional[float] = None
     
     @validator('youtube_id', always=True)
     def validate_input(cls, v, values):
