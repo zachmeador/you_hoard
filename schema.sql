@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS download_queue (
     id INTEGER PRIMARY KEY,
     video_id INTEGER NOT NULL,
     priority INTEGER DEFAULT 0,
+    quality TEXT,
     status TEXT CHECK(status IN ('queued', 'downloading', 'completed', 'failed', 'paused')) DEFAULT 'queued',
     progress REAL DEFAULT 0.0, -- 0.0 to 100.0
     error_message TEXT,

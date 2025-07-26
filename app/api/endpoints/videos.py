@@ -11,6 +11,7 @@ import mimetypes
 from app.core.config import settings
 from app.core.database import Database
 from app.core.downloader import Downloader
+from app.core.quality import QualityService
 from app.core.security import SessionBearer, SecurityManager
 from app.models.video import (
     VideoCreate, VideoUpdate, VideoResponse, VideoListResponse, 
@@ -233,6 +234,19 @@ async def create_video(
         "updated_at": datetime.utcnow().isoformat()
     })
     
+    # Resolve quality preference and auto-queue download
+    # TODO: Extract user_id from auth context when available
+    user_id = None
+    
+    resolved_quality = await QualityService.resolve_quality_preference(
+        db,
+        video_quality=video_data.quality,
+        user_id=user_id
+    )
+    
+    # Queue download with resolved quality
+    await downloader.queue_download(video_id, priority=5, quality=resolved_quality)
+    
     return await get_video(video_id, db, _)
 
 
@@ -341,8 +355,17 @@ async def queue_video_download(
             detail="Video already in download queue"
         )
     
-    # Queue download
-    queue_id = await downloader.queue_download(video_id, download_request.priority)
+    # Resolve quality preference and queue download
+    # For manual downloads, try to get user from auth context
+    user_id = None  # TODO: Extract from auth context when available
+    
+    resolved_quality = await QualityService.resolve_quality_preference(
+        db,
+        video_quality=download_request.quality_override,
+        user_id=user_id
+    )
+    
+    queue_id = await downloader.queue_download(video_id, download_request.priority, resolved_quality)
     
     return {"message": "Video queued for download", "queue_id": queue_id}
 

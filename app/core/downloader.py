@@ -11,6 +11,7 @@ from datetime import datetime
 from app.core.config import settings
 from app.core.database import Database
 from app.core.metadata import MetadataManager
+from app.core.quality import QualityService
 
 
 class DownloadProgress:
@@ -58,12 +59,17 @@ class Downloader:
         self.active_downloads = {}
         self._semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_DOWNLOADS)
     
-    def get_ydl_opts(self, output_path: Path, progress_hook: Optional[Callable] = None) -> dict:
+    def get_ydl_opts(self, output_path: Path, quality: Optional[str] = None, progress_hook: Optional[Callable] = None) -> dict:
         """Get yt-dlp options"""
         import shutil
         
+        # Use provided quality or fall back to default
+        format_selector = settings.FORMAT_SELECTOR
+        if quality:
+            format_selector = QualityService.get_format_selector(quality)
+            
         opts = {
-            'format': settings.FORMAT_SELECTOR,
+            'format': format_selector,
             'outtmpl': {
                 'default': str(output_path / 'video.%(ext)s'),
                 'thumbnail': str(output_path / 'thumbnail.%(ext)s'),
@@ -116,7 +122,7 @@ class Downloader:
         
         return await loop.run_in_executor(None, _extract)
     
-    async def download_video(self, video_id: int, url: str, output_dir: Path) -> bool:
+    async def download_video(self, video_id: int, url: str, output_dir: Path, quality: Optional[str] = None) -> bool:
         """Download a video"""
         async with self._semaphore:
             loop = asyncio.get_event_loop()
@@ -138,7 +144,7 @@ class Downloader:
                 
                 # Download in thread pool
                 loop = asyncio.get_event_loop()
-                opts = self.get_ydl_opts(output_dir, progress_hook)
+                opts = self.get_ydl_opts(output_dir, quality, progress_hook)
                 
                 def _download():
                     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -161,12 +167,30 @@ class Downloader:
                     # Don't fail the download if metadata creation fails
                     print(f"App metadata creation error: {e}")
                 
+                # Extract actual quality from downloaded video info
+                actual_quality = None
+                try:
+                    info_file = output_dir / "video.info.json"
+                    if not info_file.exists():
+                        info_file = output_dir / "info.json"
+                    
+                    if info_file.exists():
+                        import json
+                        with open(info_file, 'r', encoding='utf-8') as f:
+                            info_data = json.load(f)
+                            actual_quality = QualityService.extract_quality_from_metadata(info_data)
+                except Exception as e:
+                    print(f"Quality extraction error: {e}")
+                
                 # Update video record
                 video_update = {
                     "download_status": "completed",
                     "file_path": str(output_dir.relative_to(settings.get_storage_path())),
                     "updated_at": datetime.utcnow().isoformat()
                 }
+                
+                if actual_quality:
+                    video_update["quality"] = actual_quality
                 
                 if thumbnail_path:
                     video_update["thumbnail_path"] = thumbnail_path
@@ -230,11 +254,12 @@ class Downloader:
             # Don't let progress update errors crash the download
             print(f"Progress update error: {e}")
     
-    async def queue_download(self, video_id: int, priority: int = 0) -> int:
+    async def queue_download(self, video_id: int, priority: int = 0, quality: Optional[str] = None) -> int:
         """Add video to download queue"""
         queue_id = await self.db.insert("download_queue", {
             "video_id": video_id,
             "priority": priority,
+            "quality": quality,
             "status": "queued",
             "progress": 0.0
         })
@@ -246,12 +271,14 @@ class Downloader:
     
     async def _process_download(self, video_id: int):
         """Process a queued download"""
-        # Get video info
+        # Get video and download queue info
         video = await self.db.execute_one(
-            """SELECT v.*, c.youtube_id as channel_youtube_id, c.name as channel_name
+            """SELECT v.*, c.youtube_id as channel_youtube_id, c.name as channel_name,
+                      dq.quality as download_quality
                FROM videos v
                JOIN channels c ON v.channel_id = c.id
-               WHERE v.id = ?""",
+               JOIN download_queue dq ON dq.video_id = v.id
+               WHERE v.id = ? AND dq.status IN ('queued', 'downloading')""",
             (video_id,)
         )
         
@@ -271,7 +298,7 @@ class Downloader:
         
         # Download
         url = f"https://www.youtube.com/watch?v={video['youtube_id']}"
-        await self.download_video(video_id, url, video_dir)
+        await self.download_video(video_id, url, video_dir, video.get('download_quality'))
     
     def get_active_downloads(self) -> Dict[int, DownloadProgress]:
         """Get current active downloads"""
