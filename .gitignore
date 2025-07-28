@@ -87,3 +87,4 @@ app/static/dist/
 # Package manager lock files
 package-lock.json
 yarn.lock
+docs/example-youtube-links.md

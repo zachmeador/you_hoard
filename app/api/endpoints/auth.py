@@ -61,7 +61,7 @@ async def login(
         )
     
     # Create session
-    token = security_manager.create_session(user['id'])
+    token = await security_manager.create_session(user['id'])
     
     return LoginResponse(
         token=token,
@@ -88,7 +88,7 @@ async def login_form(
         )
     
     # Create session
-    token = security_manager.create_session(user['id'])
+    token = await security_manager.create_session(user['id'])
     
     # Create response that redirects to home
     response = RedirectResponse(url="/", status_code=302)
@@ -124,7 +124,7 @@ async def logout(
         token = request.cookies.get("session_token")
     
     if token:
-        security_manager.delete_session(token)
+        await security_manager.delete_session(token)
     
     return {"message": "Logged out successfully"}
 
@@ -150,7 +150,7 @@ async def auth_status(
     if not token:
         return AuthStatus(authenticated=False)
     
-    session = security_manager.get_session(token)
+    session = await security_manager.get_session(token)
     
     if not session:
         return AuthStatus(authenticated=False)

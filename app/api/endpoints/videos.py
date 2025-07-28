@@ -174,22 +174,111 @@ async def create_video(
     """
     Add video by URL or YouTube ID
     """
-    # Extract video info
-    if video_data.url:
-        info = await downloader.extract_info(video_data.url)
-        youtube_id = info.get('id')
+    # Extract video info with comprehensive error handling
+    try:
+        if video_data.url:
+            info = await downloader.extract_info(video_data.url)
+            youtube_id = info.get('id')
+            
+            # Extract channel info
+            channel_info = info.get('channel') or info.get('uploader')
+            channel_id_yt = info.get('channel_id') or info.get('uploader_id')
+            
+        else:
+            youtube_id = video_data.youtube_id
+            # Need to extract info to get channel
+            url = f"https://www.youtube.com/watch?v={youtube_id}"
+            info = await downloader.extract_info(url)
+            channel_info = info.get('channel') or info.get('uploader')
+            channel_id_yt = info.get('channel_id') or info.get('uploader_id')
+    except Exception as e:
+        error_str = str(e).lower()
         
-        # Extract channel info
-        channel_info = info.get('channel') or info.get('uploader')
-        channel_id_yt = info.get('channel_id') or info.get('uploader_id')
-        
-    else:
-        youtube_id = video_data.youtube_id
-        # Need to extract info to get channel
-        url = f"https://www.youtube.com/watch?v={youtube_id}"
-        info = await downloader.extract_info(url)
-        channel_info = info.get('channel') or info.get('uploader')
-        channel_id_yt = info.get('channel_id') or info.get('uploader_id')
+        # Provide specific error messages based on the type of failure
+        if any(keyword in error_str for keyword in ['403', 'forbidden', 'blocked']):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "YouTube Blocking Detected",
+                    "message": "YouTube is currently blocking requests. This might be due to rate limiting or anti-bot detection.",
+                    "suggestions": [
+                        "Try again in a few minutes",
+                        "Check if the video is accessible in your browser",
+                        "The video might be private or geo-restricted"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        elif any(keyword in error_str for keyword in ['timeout', 'timed out']):
+            raise HTTPException(
+                status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                detail={
+                    "error": "Request Timeout",
+                    "message": "The request took too long to complete. YouTube might be slow or experiencing issues.",
+                    "suggestions": [
+                        "Try again later",
+                        "Check your internet connection",
+                        "YouTube might be experiencing technical difficulties"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        elif any(keyword in error_str for keyword in ['unavailable', 'private', 'deleted', 'not found']):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error": "Video Not Available",
+                    "message": "The requested video could not be found or is not accessible.",
+                    "suggestions": [
+                        "Check if the video URL/ID is correct",
+                        "The video might be private, deleted, or geo-restricted",
+                        "Try accessing the video in your browser to verify it exists"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        elif any(keyword in error_str for keyword in ['rate limit', '429', 'too many requests']):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": "Rate Limited",
+                    "message": "Too many requests have been made. YouTube is temporarily blocking further requests.",
+                    "suggestions": [
+                        "Wait a few minutes before trying again",
+                        "The system will automatically retry with longer delays"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        elif any(keyword in error_str for keyword in ['network', 'connection', 'resolve']):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "Network Issue",
+                    "message": "Unable to connect to YouTube. This might be a temporary network issue.",
+                    "suggestions": [
+                        "Check your internet connection",
+                        "Try again in a few minutes",
+                        "YouTube might be experiencing technical difficulties"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        else:
+            # Generic error fallback
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "error": "Video Extraction Failed",
+                    "message": "Failed to extract information from the provided video URL or ID.",
+                    "suggestions": [
+                        "Verify the URL is a valid YouTube video",
+                        "Try the URL in your browser to confirm it works",
+                        "Check if the video ID is correct"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
     
     # Check if video already exists
     existing = await db.execute_one(

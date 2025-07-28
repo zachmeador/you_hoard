@@ -10,6 +10,7 @@ from app.core.database import Database
 from app.core.downloader import Downloader
 from app.core.security import SessionBearer, SecurityManager
 from app.core.metadata import classify_video_type
+from app.core.ytdlp_service import get_ytdlp_service
 from app.models.subscription import (
     SubscriptionCreate, SubscriptionUpdate,
     SubscriptionResponse, SubscriptionListResponse,
@@ -122,8 +123,98 @@ async def create_subscription(
     """
     Create new subscription
     """
-    # Extract channel info from URL
-    info = await downloader.extract_info(subscription_data.source_url)
+    # Extract channel info from URL with comprehensive error handling
+    try:
+        info = await downloader.extract_info(subscription_data.source_url)
+    except Exception as e:
+        error_str = str(e).lower()
+        
+        # Provide specific error messages based on the type of failure
+        if any(keyword in error_str for keyword in ['403', 'forbidden', 'blocked']):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "YouTube Blocking Detected",
+                    "message": "YouTube is currently blocking requests. This might be due to rate limiting or anti-bot detection.",
+                    "suggestions": [
+                        "Try again in a few minutes",
+                        "Check if the URL is accessible in your browser",
+                        "The content might be private or geo-restricted"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        elif any(keyword in error_str for keyword in ['timeout', 'timed out']):
+            raise HTTPException(
+                status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                detail={
+                    "error": "Request Timeout", 
+                    "message": "The request took too long to complete. YouTube might be slow or experiencing issues.",
+                    "suggestions": [
+                        "Try again later",
+                        "Check your internet connection",
+                        "The playlist might be very large - try a smaller playlist first"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        elif any(keyword in error_str for keyword in ['unavailable', 'private', 'deleted', 'not found']):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error": "Content Not Available",
+                    "message": "The requested content could not be found or is not accessible.",
+                    "suggestions": [
+                        "Check if the URL is correct",
+                        "The content might be private, deleted, or geo-restricted",
+                        "Try accessing the URL in your browser to verify it exists"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        elif any(keyword in error_str for keyword in ['rate limit', '429', 'too many requests']):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": "Rate Limited",
+                    "message": "Too many requests have been made. YouTube is temporarily blocking further requests.",
+                    "suggestions": [
+                        "Wait a few minutes before trying again",
+                        "The system will automatically retry with longer delays",
+                        "Consider using the YouTube Data API if you have a key"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        elif any(keyword in error_str for keyword in ['network', 'connection', 'resolve']):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "Network Issue",
+                    "message": "Unable to connect to YouTube. This might be a temporary network issue.",
+                    "suggestions": [
+                        "Check your internet connection",
+                        "Try again in a few minutes",
+                        "YouTube might be experiencing technical difficulties"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
+        else:
+            # Generic error fallback
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "error": "Extraction Failed",
+                    "message": "Failed to extract information from the provided URL.",
+                    "suggestions": [
+                        "Verify the URL is a valid YouTube channel or playlist",
+                        "Try the URL in your browser to confirm it works",
+                        "Contact support if the issue persists"
+                    ],
+                    "technical_details": str(e)
+                }
+            )
     
     if subscription_data.subscription_type == "channel":
         channel_id_yt = info.get('channel_id') or info.get('uploader_id')
@@ -560,4 +651,22 @@ async def get_scheduler_status(
         "scheduler_running": scheduler._is_running,
         "scheduled_subscriptions": scheduled_jobs,
         "total_jobs": len(scheduled_jobs)
-    } 
+    }
+
+
+@router.get("/ytdlp/status")
+async def get_ytdlp_status(_: dict = Depends(get_auth)):
+    """
+    Get YT-DLP service status for monitoring
+    """
+    ytdlp_service = get_ytdlp_service()
+    status = ytdlp_service.get_status()
+    
+    # Add human-readable status
+    status['status_message'] = "Ready"
+    if status['is_backing_off']:
+        status['status_message'] = f"Backing off (retry in {status['next_available_in']:.1f}s)"
+    elif status['failure_count'] > 0:
+        status['status_message'] = f"Recently failed ({status['failure_count']} failures)"
+    
+    return status 

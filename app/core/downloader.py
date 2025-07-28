@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.database import Database
 from app.core.metadata import MetadataManager
 from app.core.quality import QualityService
+from app.core.ytdlp_service import get_ytdlp_service
 
 
 class DownloadProgress:
@@ -57,6 +58,7 @@ class Downloader:
     def __init__(self, db: Database):
         self.db = db
         self.active_downloads = {}
+        self.active_tasks = {}  # New: track asyncio.Tasks for cancellation
         self._semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_DOWNLOADS)
     
     def get_ydl_opts(self, output_path: Path, quality: Optional[str] = None, progress_hook: Optional[Callable] = None) -> dict:
@@ -114,13 +116,9 @@ class Downloader:
     
     async def extract_info(self, url: str) -> Dict[str, Any]:
         """Extract video/channel info without downloading"""
-        loop = asyncio.get_event_loop()
-        
-        def _extract():
-            with yt_dlp.YoutubeDL({'quiet': True, 'extract_flat': False}) as ydl:
-                return ydl.extract_info(url, download=False)
-        
-        return await loop.run_in_executor(None, _extract)
+        ytdlp_service = get_ytdlp_service()
+        config = {'playlistend': settings.PLAYLIST_BATCH_SIZE}  # Limit extraction to batch size
+        return await ytdlp_service.extract_info(url, extra_config=config)
     
     async def download_video(self, video_id: int, url: str, output_dir: Path, quality: Optional[str] = None) -> bool:
         """Download a video"""
@@ -142,15 +140,16 @@ class Downloader:
                 def progress_hook(d):
                     progress.update(d)
                 
-                # Download in thread pool
-                loop = asyncio.get_event_loop()
+                # Download using centralized YTDLPService
+                ytdlp_service = get_ytdlp_service()
                 opts = self.get_ydl_opts(output_dir, quality, progress_hook)
                 
-                def _download():
-                    with yt_dlp.YoutubeDL(opts) as ydl:
-                        ydl.download([url])
-                
-                await loop.run_in_executor(None, _download)
+                await ytdlp_service.download_with_progress(
+                    url=url,
+                    output_path=output_dir,
+                    progress_callback=progress_hook,
+                    extra_config=opts
+                )
                 
                 # Process thumbnails after successful download
                 thumbnail_path = None
@@ -264,8 +263,9 @@ class Downloader:
             "progress": 0.0
         })
         
-        # Start download task
-        asyncio.create_task(self._process_download(video_id))
+        # Start download task and track it
+        task = asyncio.create_task(self._process_download(video_id))
+        self.active_tasks[video_id] = task
         
         return queue_id
     
@@ -346,3 +346,29 @@ class Downloader:
         except Exception as e:
             print(f"Error creating app metadata for {output_dir}: {str(e)}")
             return False
+
+    async def cancel_download(self, video_id: int) -> bool:
+        """Cancel an active download"""
+        if video_id in self.active_tasks:
+            task = self.active_tasks[video_id]
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                del self.active_tasks[video_id]
+                if video_id in self.active_downloads:
+                    del self.active_downloads[video_id]
+                await self.db.update(
+                    "download_queue",
+                    {"status": "failed", "error_message": "Cancelled by user"},
+                    "video_id = ?",
+                    (video_id,)
+                )
+                await self.db.update(
+                    "videos",
+                    {"download_status": "failed"},
+                    "id = ?",
+                    (video_id,)
+                )
+                return True
+        return False

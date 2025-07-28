@@ -20,7 +20,6 @@ class SecurityManager:
     
     def __init__(self, db):
         self.db = db
-        self.sessions = {}  # In-memory session storage (consider Redis for production)
     
     @staticmethod
     def hash_password(password: str) -> str:
@@ -32,32 +31,43 @@ class SecurityManager:
         """Verify a stored password against provided password"""
         return pwd_context.verify(plain_password, hashed_password)
     
-    def create_session(self, user_id: int) -> str:
+    async def create_session(self, user_id: int) -> str:
         """Create a new session for a user"""
         session_token = secrets.token_urlsafe(32)
-        self.sessions[session_token] = {
+        created_at = datetime.utcnow()
+        expires_at = created_at + timedelta(minutes=settings.SESSION_EXPIRE_MINUTES)
+        await self.db.insert("sessions", {
+            "token": session_token,
             "user_id": user_id,
-            "created_at": datetime.utcnow(),
-            "expires_at": datetime.utcnow() + timedelta(minutes=settings.SESSION_EXPIRE_MINUTES)
-        }
+            "created_at": created_at.isoformat(),
+            "expires_at": expires_at.isoformat()
+        })
         return session_token
     
-    def get_session(self, session_token: str) -> Optional[dict]:
+    async def get_session(self, session_token: str) -> Optional[dict]:
         """Get session data if valid"""
-        session = self.sessions.get(session_token)
+        session = await self.db.execute_one(
+            "SELECT * FROM sessions WHERE token = ?",
+            (session_token,)
+        )
         if not session:
             return None
         
-        if datetime.utcnow() > session["expires_at"]:
+        expires_at = datetime.fromisoformat(session["expires_at"])
+        if datetime.utcnow() > expires_at:
             # Session expired
-            del self.sessions[session_token]
+            await self.db.delete("sessions", "token = ?", (session_token,))
             return None
         
-        return session
+        return {
+            "user_id": session["user_id"],
+            "created_at": datetime.fromisoformat(session["created_at"]),
+            "expires_at": expires_at
+        }
     
-    def delete_session(self, session_token: str) -> None:
+    async def delete_session(self, session_token: str) -> None:
         """Delete a session"""
-        self.sessions.pop(session_token, None)
+        await self.db.delete("sessions", "token = ?", (session_token,))
     
     async def authenticate_user(self, username: str, password: str) -> Optional[dict]:
         """Authenticate a user with username and password"""
@@ -112,7 +122,7 @@ class SessionBearer(HTTPBearer):
                 )
             return None
         
-        session = self.security_manager.get_session(credentials.credentials)
+        session = await self.security_manager.get_session(credentials.credentials)
         
         if not session:
             if self.auto_error:

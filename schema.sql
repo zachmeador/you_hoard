@@ -137,6 +137,15 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Sessions table
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_videos_channel_id ON videos(channel_id);
 CREATE INDEX IF NOT EXISTS idx_videos_download_status ON videos(download_status);
@@ -154,6 +163,8 @@ CREATE INDEX IF NOT EXISTS idx_video_tags_video_id ON video_tags(video_id);
 CREATE INDEX IF NOT EXISTS idx_video_tags_tag_id ON video_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_channel_tags_channel_id ON channel_tags(channel_id);
 CREATE INDEX IF NOT EXISTS idx_channel_tags_tag_id ON channel_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
 -- Triggers to update timestamps
 CREATE TRIGGER IF NOT EXISTS update_channels_timestamp 

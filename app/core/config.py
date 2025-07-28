@@ -59,39 +59,51 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-here-change-in-production"
     SESSION_EXPIRE_MINUTES: int = 43200  # 30 days
     
+    # Logging settings
+    LOG_LEVEL: str = "DEBUG"
+    LOG_DIR: str = "./logs"
+    LOG_FILE: str = "youhoard.log"
+    YTDLP_LOG_LEVEL: str = "DEBUG"  # More verbose for yt-dlp operations
+    LOG_ROTATION_SIZE: str = "10MB"
+    LOG_RETENTION_COUNT: int = 5
+    LOG_FORMAT: str = "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
+    
+    # YT-DLP Anti-blocking settings
+    YTDLP_MIN_REQUEST_INTERVAL: float = 3.0  # Minimum seconds between requests
+    YTDLP_MIN_BACKOFF: float = 2.0  # Starting backoff time in seconds
+    YTDLP_MAX_BACKOFF: float = 600.0  # Maximum backoff time in seconds
+    YTDLP_USE_BROWSER_COOKIES: bool = False  # Try to use browser cookies
+    YTDLP_USER_AGENT: str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    YTDLP_TIMEOUT_EXTRACT: int = 90  # Timeout for info extraction (seconds)
+    YTDLP_TIMEOUT_PLAYLIST: int = 120  # Timeout for playlist extraction (seconds)
+    YTDLP_TIMEOUT_DOWNLOAD: int = 900  # Timeout for downloads (seconds)
+    YTDLP_MAX_RETRIES: int = 5  # Maximum retries for failed operations
+    YTDLP_BACKOFF_FACTOR: float = 2.0
+    YTDLP_SLEEP_INTERVAL: int = 2  # Base sleep interval between operations
+    YTDLP_PLAYLIST_LIMIT: int = 50  # Maximum playlist items to process at once
+    PLAYLIST_BATCH_SIZE: int = 50  # Process playlists in batches to avoid overload
+    YTDLP_VERBOSE: bool = True  # Enable verbose output from yt-dlp for debugging
+    
     # Server settings
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    RELOAD: bool = False
     
     def get_storage_path(self) -> Path:
         """Get storage path as Path object"""
-        path = Path(self.STORAGE_PATH)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return Path(self.STORAGE_PATH)
     
     def get_temp_path(self) -> Path:
         """Get temp path as Path object"""
-        path = Path(self.TEMP_PATH)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    
-    def get_channel_path(self, channel_youtube_id: str, channel_name: str) -> Path:
-        """Get channel directory path"""
-        # Sanitize channel name
-        safe_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_')).strip()
-        safe_name = safe_name.replace(' ', '_')[:50]
-        
-        channel_dir = self.get_storage_path() / "channels" / f"{channel_youtube_id}_{safe_name}"
-        channel_dir.mkdir(parents=True, exist_ok=True)
-        return channel_dir
-        safe_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_')).strip()
-        safe_name = safe_name.replace(' ', '_')
-        channel_dir = f"{channel_id}_{safe_name}"
-        path = self.get_storage_path() / "channels" / channel_dir
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return Path(self.TEMP_PATH)
+
+    def get_log_dir(self) -> Path:
+        """Get log directory as Path object"""
+        return Path(self.LOG_DIR)
+
+    def get_log_file_path(self) -> Path:
+        """Get full log file path"""
+        return self.get_log_dir() / self.LOG_FILE
 
 
-# Create global settings instance
+# Global settings instance
 settings = Settings() 

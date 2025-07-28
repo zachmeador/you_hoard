@@ -274,6 +274,7 @@ async def retry_download(
 async def cancel_download(
     download_id: int,
     db: Database = Depends(get_db),
+    downloader: Downloader = Depends(get_downloader),
     _: dict = Depends(get_auth)
 ):
     """
@@ -291,7 +292,8 @@ async def cancel_download(
             detail="Download not found"
         )
     
-    # TODO: Stop download if active
+    # Attempt to cancel if active
+    await downloader.cancel_download(download['video_id'])
     
     # Delete from queue
     await db.delete("download_queue", "id = ?", (download_id,))

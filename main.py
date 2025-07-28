@@ -8,21 +8,31 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
+import logging
 
 from app.core.config import settings
+from app.core.logging_setup import setup_logging
 from app.core.database import Database
 from app.core.recovery import RecoveryManager
 from app.api.endpoints import auth, videos, channels, subscriptions, downloads
-import logging
+
+# Initialize logging first
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Create database tables
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger = logging.getLogger(__name__)
+    logger.info("Starting YouHoard application...")
     db = Database(settings.DATABASE_PATH)
     await db.init_db()
     app.state.db = db
+    
+    from app.core.scheduler import SubscriptionScheduler
+    scheduler = SubscriptionScheduler(db)
+    await scheduler.start()
+    app.state.scheduler = scheduler
     
     # Auto-recovery on startup if database is empty
     try:
@@ -39,9 +49,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Auto-recovery failed: {str(e)}")
     
+    logger.info("YouHoard application startup completed")
     yield
     # Shutdown
-    pass
+    await app.state.scheduler.stop()
+    logger.info("YouHoard application shutting down...")
 
 app = FastAPI(
     title="YouHoard",
@@ -86,24 +98,22 @@ if os.path.exists(dist_path):
 async def health_check():
     return {"status": "healthy", "message": "YouHoard is running"}
 
-# Serve the Svelte app for all non-API routes
+@app.exception_handler(404)
+async def custom_404_handler(request: Request, exc: HTTPException):
+    # Serve the Svelte app for client-side routing
+    return FileResponse("index.html")
+
+# Catch-all route to serve the Svelte app (must be last)
 @app.get("/{full_path:path}")
-async def serve_svelte_app(request: Request, full_path: str):
-    # If it's an API route, let FastAPI handle it normally
+async def serve_spa(full_path: str):
+    # Static files are handled by mounted directories above
+    # This handles all other routes for client-side routing
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API endpoint not found")
     
-    # For all other routes, serve the Svelte app
-    index_path = "app/static/dist/index.html"
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    else:
-        # Fallback to development mode - serve from root
-        fallback_path = "index.html"
-        if os.path.exists(fallback_path):
-            return FileResponse(fallback_path)
-        else:
-            raise HTTPException(status_code=404, detail="Frontend not built")
+    # Serve the main index.html for client-side routing
+    return FileResponse("index.html")
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
