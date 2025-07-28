@@ -118,7 +118,7 @@ CREATE TABLE channel_tags (
 );
 
 -- Download Queue
-CREATE TABLE download_queue (
+CREATE TABLE job_queue (
     id INTEGER PRIMARY KEY,
     video_id INTEGER NOT NULL,
     priority INTEGER DEFAULT 0,
@@ -367,7 +367,7 @@ youhoard/
 - Password hashing with bcrypt
 
 ## Error Handling
-- **Download Failures**: Track in `download_queue` with `error_message`; expose retry via API and UI notifications.
+- **Download Failures**: Track in `job_queue` with `error_message`; expose retry via API and UI notifications.
 - **Rate Limiting/Retries**: Implement exponential backoff for YouTube interactions.
 - **Input Validation**: Sanitize URLs, tags, and metadata to prevent errors or exploits.
 - **Logging**: Centralize in `logs/download.log`; add `/api/logs` endpoint for recent entries on home page.

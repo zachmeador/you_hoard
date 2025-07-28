@@ -14,6 +14,12 @@ def teardown(remove_storage=False):
             os.remove(db_file)
             print(f"Removed {db_file}")
     
+    # Clear logs directory
+    logs_path = Path("logs")
+    if logs_path.exists():
+        shutil.rmtree(logs_path)
+        print("Cleared logs directory")
+    
     # Clear storage directory
     if remove_storage:
         storage_path = Path("storage")

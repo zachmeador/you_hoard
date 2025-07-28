@@ -1,10 +1,13 @@
 """
 Subscription management endpoints
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from typing import Optional
 from datetime import datetime
 from apscheduler.triggers.cron import CronTrigger
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import Database
 from app.core.downloader import Downloader
@@ -125,8 +128,11 @@ async def create_subscription(
     """
     # Extract channel info from URL with comprehensive error handling
     try:
+        logger.info(f"Extracting channel info from URL: {subscription_data.source_url}")
         info = await downloader.extract_info(subscription_data.source_url)
+        logger.info(f"Successfully extracted channel info: {info.get('title', 'Unknown')}")
     except Exception as e:
+        logger.error(f"Failed to extract channel info from {subscription_data.source_url}: {e}")
         error_str = str(e).lower()
         
         # Provide specific error messages based on the type of failure
@@ -272,6 +278,15 @@ async def create_subscription(
     # Add to scheduler if enabled
     if sub_data.get('enabled', True):
         await scheduler.add_subscription(subscription_id, sub_data.get('check_frequency', '0 * * * *'))
+        
+        # Queue initial video discovery for this subscription only if enabled
+        try:
+            logger.info(f"Queueing initial video discovery for subscription {subscription_id}")
+            await downloader.queue_subscription_discovery(subscription_id, priority=2)
+            logger.info(f"Successfully queued video discovery for subscription {subscription_id}")
+        except Exception as e:
+            # Log the error but don't fail the subscription creation
+            logger.warning(f"Failed to queue initial video discovery for subscription {subscription_id}: {e}")
     
     # Return created subscription
     return await get_subscription(subscription_id, db, _)
@@ -417,7 +432,7 @@ async def check_subscription(
     _: dict = Depends(get_auth)
 ):
     """
-    Manual check for new content in subscription
+    Manual check for new content in subscription (queued for background processing)
     """
     # Get subscription
     subscription = await db.execute_one(
@@ -434,120 +449,93 @@ async def check_subscription(
             detail="Subscription not found"
         )
     
-    # Extract video list from channel/playlist
-    info = await downloader.extract_info(subscription['source_url'])
+    # Queue subscription discovery job with high priority (manual request)
+    job_id = await downloader.queue_subscription_discovery(subscription_id, priority=3)
     
-    new_videos = []
-    errors = []
-    
-    try:
-        # Get list of videos
-        entries = info.get('entries', [])
-        
-        # Get subscription's content type preferences
-        subscription_content_types = subscription.get('content_types', ['video'])
-        if isinstance(subscription_content_types, str):
-            subscription_content_types = Database.json_decode(subscription_content_types)
-        
-        # Calculate fetch limit to ensure we get enough videos after filtering
-        # If user wants all content types, use their limit directly
-        # Otherwise, fetch extra to account for filtering
-        desired_count = subscription.get('latest_n_videos', 20)
-        if len(subscription_content_types) >= 3:  # All content types
-            fetch_limit = desired_count
-        else:
-            # Fetch 3-5x more to account for filtering, max 200 for performance
-            fetch_limit = min(desired_count * 4, 200)
-        
-        # Process videos and apply content filtering
-        matched_videos = []
-        for entry in entries[:fetch_limit]:
-            video_id = entry.get('id')
-            if not video_id:
-                continue
-            
-            # Classify video type and check if it's wanted by this subscription
-            video_type = classify_video_type(entry)
-            if video_type not in subscription_content_types:
-                continue  # Skip this video - not wanted by subscription
-            
-            # Check if video already exists
-            existing = await db.execute_one(
-                "SELECT id FROM videos WHERE youtube_id = ?",
-                (video_id,)
-            )
-            
-            if not existing:
-                # Add this video to our matched list
-                matched_videos.append({
-                    'entry': entry,
-                    'video_id': video_id, 
-                    'video_type': video_type
-                })
-                
-                # Stop when we have enough matching videos
-                if len(matched_videos) >= desired_count:
-                    break
-        
-        # Now process the matched videos (up to desired count)
-        for video_data in matched_videos[:desired_count]:
-            entry = video_data['entry']
-            video_id = video_data['video_id']
-            video_type = video_data['video_type']
-            
-            try:
-                video_db_id = await db.insert("videos", {
-                    "youtube_id": video_id,
-                    "channel_id": subscription['channel_id'],
-                    "title": entry.get('title', 'Unknown Title'),
-                    "description": entry.get('description'),
-                    "duration": entry.get('duration'),
-                    "upload_date": entry.get('upload_date'),
-                    "video_type": video_type,
-                    "download_status": "pending",
-                    "created_at": datetime.utcnow().isoformat(),
-                    "updated_at": datetime.utcnow().isoformat()
-                })
-                
-                # Auto-queue for download if enabled
-                if subscription.get('auto_download', True):
-                    try:
-                        await downloader.queue_download(
-                            video_db_id, 
-                            priority=1,  # Manual checks get priority 1
-                            quality=subscription.get('quality_preference', '720p')
-                        )
-                    except Exception as e:
-                        errors.append(f"Failed to queue video {video_id}: {str(e)}")
-                
-                new_videos.append({
-                    "youtube_id": video_id,
-                    "title": entry.get('title')
-                })
-            except Exception as e:
-                errors.append(f"Failed to add video {video_id}: {str(e)}")
-        
-        # Update last check time and new videos count
-        await db.update(
-            "subscriptions",
-            {
-                "last_check": datetime.utcnow().isoformat(),
-                "new_videos_count": len(new_videos)
-            },
-            "id = ?",
-            (subscription_id,)
-        )
-        
-    except Exception as e:
-        errors.append(f"Failed to check subscription: {str(e)}")
-    
-    return SubscriptionCheckResult(
-        subscription_id=subscription_id,
-        channel_name=subscription['channel_name'],
-        new_videos=new_videos,
-        errors=errors,
-        checked_at=datetime.utcnow()
+    return {
+        "message": "Subscription check queued for processing",
+        "subscription_id": subscription_id,
+        "channel_name": subscription['channel_name'],
+        "job_id": job_id,
+        "queued_at": datetime.utcnow().isoformat()
+    }
+
+
+@router.get("/{subscription_id}/jobs")
+async def get_subscription_jobs(
+    subscription_id: int,
+    db: Database = Depends(get_db),
+    _: dict = Depends(get_auth)
+):
+    """
+    Get processing jobs for a subscription
+    """
+    # Get recent jobs for this subscription
+    jobs = await db.execute(
+        """SELECT * FROM job_queue 
+           WHERE job_type = 'subscription_discovery' 
+           AND subscription_id = ? 
+           ORDER BY created_at DESC 
+           LIMIT 10""",
+        (subscription_id,)
     )
+    
+    job_list = []
+    for job in jobs:
+        job_data = dict(job)
+        
+        # Parse result data if available
+        if job_data.get('result_data'):
+            try:
+                job_data['result_data'] = Database.json_decode(job_data['result_data'])
+            except:
+                pass
+                
+        job_list.append(job_data)
+    
+    return {"jobs": job_list}
+
+
+@router.get("/jobs/{job_id}")
+async def get_job_status(
+    job_id: int,
+    db: Database = Depends(get_db),
+    downloader: Downloader = Depends(get_downloader),
+    _: dict = Depends(get_auth)
+):
+    """
+    Get status of a specific processing job
+    """
+    job = await db.execute_one(
+        "SELECT * FROM job_queue WHERE id = ?",
+        (job_id,)
+    )
+    
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found"
+        )
+    
+    job_data = dict(job)
+    
+    # Add live progress if job is active
+    active_jobs = downloader.get_active_downloads()
+    if job_id in active_jobs:
+        progress = active_jobs[job_id]
+        job_data.update({
+            'live_progress': progress.progress,
+            'live_status': progress.status
+        })
+    
+    # Parse result data if available
+    if job_data.get('result_data'):
+        try:
+            job_data['result_data'] = Database.json_decode(job_data['result_data'])
+        except:
+            pass
+            
+    return job_data
 
 
 @router.post("/{subscription_id}/pause")

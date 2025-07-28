@@ -80,7 +80,7 @@ async def list_downloads(
     # Get downloads
     query = f"""
         SELECT dq.*, v.title as video_title, c.name as channel_name
-        FROM download_queue dq
+        FROM job_queue dq
         JOIN videos v ON dq.video_id = v.id
         JOIN channels c ON v.channel_id = c.id
         WHERE {where_clause}
@@ -117,7 +117,7 @@ async def list_downloads(
             COUNT(CASE WHEN status = 'downloading' THEN 1 END) as active_count,
             COUNT(CASE WHEN status = 'queued' THEN 1 END) as queued_count,
             COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count
-        FROM download_queue
+        FROM job_queue
     """
     counts = await db.execute_one(count_query)
     
@@ -141,7 +141,7 @@ async def pause_download(
     """
     # Check if download exists
     download = await db.execute_one(
-        "SELECT * FROM download_queue WHERE id = ?",
+        "SELECT * FROM job_queue WHERE id = ?",
         (download_id,)
     )
     
@@ -159,7 +159,7 @@ async def pause_download(
     
     # Update status
     await db.update(
-        "download_queue",
+        "job_queue",
         {"status": "paused"},
         "id = ?",
         (download_id,)
@@ -182,7 +182,7 @@ async def resume_download(
     """
     # Check if download exists
     download = await db.execute_one(
-        "SELECT * FROM download_queue WHERE id = ?",
+        "SELECT * FROM job_queue WHERE id = ?",
         (download_id,)
     )
     
@@ -200,7 +200,7 @@ async def resume_download(
     
     # Update status and re-queue
     await db.update(
-        "download_queue",
+        "job_queue",
         {"status": "queued"},
         "id = ?",
         (download_id,)
@@ -225,7 +225,7 @@ async def retry_download(
     """
     # Check if download exists
     download = await db.execute_one(
-        "SELECT * FROM download_queue WHERE id = ?",
+        "SELECT * FROM job_queue WHERE id = ?",
         (download_id,)
     )
     
@@ -243,7 +243,7 @@ async def retry_download(
     
     # Reset download
     await db.update(
-        "download_queue",
+        "job_queue",
         {
             "status": "queued",
             "progress": 0.0,
@@ -282,7 +282,7 @@ async def cancel_download(
     """
     # Check if download exists
     download = await db.execute_one(
-        "SELECT * FROM download_queue WHERE id = ?",
+        "SELECT * FROM job_queue WHERE id = ?",
         (download_id,)
     )
     
@@ -296,7 +296,7 @@ async def cancel_download(
     await downloader.cancel_download(download['video_id'])
     
     # Delete from queue
-    await db.delete("download_queue", "id = ?", (download_id,))
+    await db.delete("job_queue", "id = ?", (download_id,))
     
     # Update video status if not completed
     if download['status'] != 'completed':
@@ -319,7 +319,7 @@ async def clear_completed_downloads(
     Remove all completed downloads from queue
     """
     deleted = await db.delete(
-        "download_queue",
+        "job_queue",
         "status = ?",
         ("completed",)
     )
@@ -338,14 +338,14 @@ async def retry_all_failed(
     """
     # Get failed downloads
     failed_downloads = await db.execute(
-        "SELECT * FROM download_queue WHERE status = ?",
+        "SELECT * FROM job_queue WHERE status = ?",
         ("failed",)
     )
     
     # Reset each failed download
     for download in failed_downloads:
         await db.update(
-            "download_queue",
+            "job_queue",
             {
                 "status": "queued",
                 "progress": 0.0,

@@ -106,19 +106,26 @@ CREATE TABLE IF NOT EXISTS channel_tags (
     FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE
 );
 
--- Download Queue
-CREATE TABLE IF NOT EXISTS download_queue (
+-- Unified Job Queue (handles downloads, subscription discovery, metadata extraction)
+CREATE TABLE IF NOT EXISTS job_queue (
     id INTEGER PRIMARY KEY,
-    video_id INTEGER NOT NULL,
+    job_type TEXT CHECK(job_type IN ('download', 'subscription_discovery', 'video_metadata_extraction')) DEFAULT 'download',
+    video_id INTEGER, -- for download jobs
+    subscription_id INTEGER, -- for subscription_discovery jobs
+    video_url TEXT, -- for video_metadata_extraction jobs
     priority INTEGER DEFAULT 0,
-    quality TEXT,
-    status TEXT CHECK(status IN ('queued', 'downloading', 'completed', 'failed', 'paused')) DEFAULT 'queued',
+    quality TEXT, -- for download jobs
+    status TEXT CHECK(status IN ('queued', 'downloading', 'processing', 'completed', 'failed', 'paused')) DEFAULT 'queued',
     progress REAL DEFAULT 0.0, -- 0.0 to 100.0
+    videos_found INTEGER DEFAULT 0, -- for discovery jobs
+    videos_processed INTEGER DEFAULT 0, -- for discovery jobs
     error_message TEXT,
+    result_data TEXT, -- JSON object with job results
     started_at TIMESTAMP,
     completed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE
+    FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE,
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions (id) ON DELETE CASCADE
 );
 
 -- App Settings
@@ -157,8 +164,10 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_enabled ON subscriptions(enabled);
 CREATE INDEX IF NOT EXISTS idx_scheduler_events_subscription_id ON scheduler_events(subscription_id);
 CREATE INDEX IF NOT EXISTS idx_scheduler_events_event_type ON scheduler_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_scheduler_events_started_at ON scheduler_events(started_at);
-CREATE INDEX IF NOT EXISTS idx_download_queue_video_id ON download_queue(video_id);
-CREATE INDEX IF NOT EXISTS idx_download_queue_status ON download_queue(status);
+CREATE INDEX IF NOT EXISTS idx_job_queue_video_id ON job_queue(video_id);
+CREATE INDEX IF NOT EXISTS idx_job_queue_subscription_id ON job_queue(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
+CREATE INDEX IF NOT EXISTS idx_job_queue_job_type ON job_queue(job_type);
 CREATE INDEX IF NOT EXISTS idx_video_tags_video_id ON video_tags(video_id);
 CREATE INDEX IF NOT EXISTS idx_video_tags_tag_id ON video_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_channel_tags_channel_id ON channel_tags(channel_id);

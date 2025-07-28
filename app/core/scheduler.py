@@ -90,7 +90,7 @@ class SubscriptionScheduler:
             logger.error(f"Failed to schedule subscription {subscription_id}: {e}")
     
     async def _check_subscription(self, subscription_id: int):
-        """Check a subscription for new content"""
+        """Check a subscription for new content (queue job for background processing)"""
         start_time = time.time()
         event_id = None
         
@@ -122,146 +122,14 @@ class SubscriptionScheduler:
                                             error_message="Subscription not found or disabled")
                 return
             
-            # Extract video list from channel/playlist
-            info = await self.downloader.extract_info(subscription['source_url'])
+            # Queue subscription discovery job (scheduled checks get priority 1)
+            job_id = await self.downloader.queue_subscription_discovery(subscription_id, priority=1)
+            logger.info(f"Queued subscription discovery job {job_id} for subscription {subscription_id}")
             
-            new_videos = []
-            errors = []
-            videos_queued = 0
-            videos_filtered = 0
-            content_types_found = set()
-            
-            # Get list of videos
-            entries = info.get('entries', [])
-            videos_found = len(entries)
-            
-            # Get subscription's content type preferences
-            subscription_content_types = subscription.get('content_types', ['video'])
-            if isinstance(subscription_content_types, str):
-                subscription_content_types = self.db.json_decode(subscription_content_types)
-            
-            # Calculate fetch limit to ensure we get enough videos after filtering
-            desired_count = subscription.get('latest_n_videos', 20)
-            if len(subscription_content_types) >= 3:  # All content types
-                fetch_limit = desired_count
-            else:
-                # Fetch 3-5x more to account for filtering, max 200 for performance
-                fetch_limit = min(desired_count * 4, 200)
-            
-            # Process videos and apply content filtering
-            matched_videos = []
-            for entry in entries[:fetch_limit]:
-                video_id = entry.get('id')
-                if not video_id:
-                    continue
-                
-                # Classify video type and check if it's wanted by this subscription
-                video_type = classify_video_type(entry)
-                content_types_found.add(video_type)
-                
-                if video_type not in subscription_content_types:
-                    videos_filtered += 1
-                    continue  # Skip this video - not wanted by subscription
-                
-                # Check if video already exists
-                existing = await self.db.execute_one(
-                    "SELECT id FROM videos WHERE youtube_id = ?",
-                    (video_id,)
-                )
-                
-                if not existing:
-                    # Add this video to our matched list
-                    matched_videos.append({
-                        'entry': entry,
-                        'video_id': video_id, 
-                        'video_type': video_type
-                    })
-                    
-                    # Stop when we have enough matching videos
-                    if len(matched_videos) >= desired_count:
-                        break
-            
-            # Now process the matched videos (up to desired count)
-            for video_data in matched_videos[:desired_count]:
-                entry = video_data['entry']
-                video_id = video_data['video_id']
-                video_type = video_data['video_type']
-                
-                try:
-                    video_db_id = await self.db.insert("videos", {
-                        "youtube_id": video_id,
-                        "channel_id": subscription['channel_id'],
-                        "title": entry.get('title', 'Unknown Title'),
-                        "description": entry.get('description'),
-                        "duration": entry.get('duration'),
-                        "upload_date": entry.get('upload_date'),
-                        "video_type": video_type,
-                        "download_status": "pending",
-                        "created_at": datetime.utcnow().isoformat(),
-                        "updated_at": datetime.utcnow().isoformat()
-                    })
-                    
-                    # Auto-queue for download if enabled
-                    if subscription.get('auto_download', True):
-                        try:
-                            await self.downloader.queue_download(
-                                video_db_id, 
-                                priority=1,  # Subscription downloads get priority 1
-                                quality=subscription.get('quality_preference', '1080p')
-                            )
-                            videos_queued += 1
-                            logger.info(f"Queued new video for download: {entry.get('title')}")
-                        except Exception as e:
-                            logger.error(f"Failed to queue video {video_id}: {e}")
-                    
-                    new_videos.append({
-                        "youtube_id": video_id,
-                        "title": entry.get('title')
-                    })
-                    logger.info(f"Added new video: {entry.get('title')}")
-                except Exception as e:
-                    error_msg = f"Failed to add video {video_id}: {str(e)}"
-                    errors.append(error_msg)
-                    logger.error(error_msg)
-            
-            # Update last check time and new videos count
-            await self.db.update(
-                "subscriptions",
-                {
-                    "last_check": datetime.utcnow().isoformat(),
-                    "new_videos_count": len(new_videos)
-                },
-                "id = ?",
-                (subscription_id,)
-            )
-            
-            # Complete event log with success
-            status = "success" if not errors else "partial_success"
+            # Complete the event immediately since we've queued the job
             if event_id:
-                await self._complete_event(
-                    event_id, start_time, status,
-                    videos_found=videos_found,
-                    videos_added=len(new_videos),
-                    videos_queued=videos_queued,
-                    videos_filtered=videos_filtered,
-                    error_count=len(errors),
-                    error_message="; ".join(errors[:3]) if errors else None,  # First 3 errors
-                    content_types_processed=list(content_types_found),
-                    metadata={
-                        "channel_name": subscription.get('channel_name'),
-                        "source_url": subscription.get('source_url'),
-                        "fetch_limit": fetch_limit,
-                        "desired_count": desired_count
-                    }
-                )
-            
-            if new_videos:
-                logger.info(f"Found {len(new_videos)} new videos for subscription {subscription_id}")
-            else:
-                logger.info(f"No new videos found for subscription {subscription_id}")
-            
-            if errors:
-                logger.warning(f"Errors during check: {errors}")
+                await self._complete_event(event_id, start_time, "success", 
+                                         metadata={"job_id": job_id, "message": "Queued for background processing"})
             
         except Exception as e:
             logger.error(f"Failed to check subscription {subscription_id}: {e}")

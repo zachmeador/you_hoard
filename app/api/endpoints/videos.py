@@ -398,7 +398,7 @@ async def delete_video(
         )
     
     # Delete from queue if present
-    await db.delete("download_queue", "video_id = ?", (video_id,))
+    await db.delete("job_queue", "video_id = ?", (video_id,))
     
     # Delete tags
     await db.delete("video_tags", "video_id = ?", (video_id,))
@@ -436,7 +436,7 @@ async def queue_video_download(
     
     # Check if already in queue
     existing_queue = await db.execute_one(
-        "SELECT id FROM download_queue WHERE video_id = ? AND status IN ('queued', 'downloading')",
+        "SELECT id FROM job_queue WHERE video_id = ? AND status IN ('queued', 'downloading')",
         (video_id,)
     )
     

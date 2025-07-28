@@ -76,6 +76,9 @@ def configure_module_loggers() -> None:
     logging.getLogger('uvicorn').setLevel(logging.WARNING)
     logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
     logging.getLogger('fastapi').setLevel(logging.WARNING)
+    logging.getLogger('aiosqlite').setLevel(logging.WARNING)
+    logging.getLogger('watchfiles').setLevel(logging.WARNING)
+    logging.getLogger('watchfiles.main').setLevel(logging.WARNING)
 
 
 def _parse_size(size_str: str) -> int:
