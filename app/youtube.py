@@ -4,6 +4,7 @@ Tests replace `YouTube` with a fake that has the same async methods.
 """
 
 import asyncio
+import functools
 import logging
 import re
 import threading
@@ -15,6 +16,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
+from yt_dlp.globals import supported_js_runtimes
 from yt_dlp.utils import DownloadCancelled
 
 from app.config import config
@@ -301,6 +303,7 @@ class YouTube:
         video_type: str | None,
         known: set[str] | None = None,
         stop_after_known: int = 10,
+        cancelled: threading.Event | None = None,
     ) -> list[Entry]:
         """List a channel tab or playlist, newest first for channels.
 
@@ -327,6 +330,8 @@ class YouTube:
                         return []  # e.g. a channel without a Shorts tab
                     raise
                 for raw in info.get("entries") or ():
+                    if cancelled is not None and cancelled.is_set():
+                        raise DownloadCancelled("Cancelled")
                     entry = _entry(raw, kind, video_type)
                     if entry is None or entry.youtube_id in seen:
                         continue
@@ -406,15 +411,18 @@ class YouTube:
         return await self._run(work, retries=0)
 
     def versions(self) -> dict[str, str | None]:
-        from yt_dlp.globals import supported_js_runtimes
+        return runtime_versions()
 
-        runtime = None
-        runtime_class = supported_js_runtimes.value.get(config.YTDLP_JS_RUNTIME)
-        if runtime_class:
-            info = runtime_class(path=config.YTDLP_JS_RUNTIME_PATH).info
-            if info:
-                runtime = f"{info.name} {info.version}"
-        return {"yt_dlp": yt_dlp.version.__version__, "js_runtime": runtime}
+
+@functools.cache
+def runtime_versions() -> dict[str, str | None]:
+    runtime = None
+    runtime_class = supported_js_runtimes.value.get(config.YTDLP_JS_RUNTIME)
+    if runtime_class:
+        info = runtime_class(path=config.YTDLP_JS_RUNTIME_PATH).info
+        if info and info.supported:
+            runtime = f"{info.name} {info.version}"
+    return {"yt_dlp": yt_dlp.version.__version__, "js_runtime": runtime}
 
 
 def _entry(raw: dict[str, Any] | None, kind: str, video_type: str | None) -> Entry | None:

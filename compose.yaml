@@ -1,0 +1,18 @@
+services:
+  youhoard:
+    build: .
+    image: youhoard
+    restart: unless-stopped
+    # Run as the user that owns your media files, so downloads, removals and
+    # --organize can write there.
+    user: "1000:1000"
+    ports:
+      - "8000:8000"
+    environment:
+      YTDLP_UPDATE_ON_START: "1"
+      # YTDLP_COOKIE_FILE: /data/cookies.txt
+    volumes:
+      - ./data:/data
+      # The archive. To import TubeArchivist in place, mount its media folder here.
+      - /path/to/media:/media
+    stop_grace_period: 30s

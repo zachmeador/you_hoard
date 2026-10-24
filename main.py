@@ -1,80 +1,94 @@
-"""YouHoard's API, worker lifecycle and production frontend."""
+"""YouHoard: the API, the job runner and the built frontend in one process."""
 
 import logging
+import logging.handlers
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.endpoints import auth, channels, downloads, subscriptions, videos
-from app.core.config import settings
-from app.core.database import Database
-from app.core.downloader import Downloader
-from app.core.logging_setup import setup_logging
-from app.core.recovery import RecoveryManager
-from app.core.scheduler import SubscriptionScheduler
+from app import __version__
+from app.api import auth, channels, jobs, subscriptions, system, videos
+from app.auth import current_user
+from app.config import config
+from app.db import Database
+from app.jobs import JobRunner
+from app.settings import Settings
+from app.youtube import YouTube
 
-ROOT = Path(__file__).resolve().parent
-logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    setup_logging()
-    settings.get_storage_path().mkdir(parents=True, exist_ok=True)
-    db = Database(settings.DATABASE_PATH)
-    await db.init_db()
-    app.state.db = db
-    recovery = RecoveryManager(db)
-    if await recovery.check_database_empty():
-        result = await recovery.scan_and_recover()
-        logger.info("Recovered %s videos from local storage", result.videos_created)
-    downloader = Downloader(db)
-    app.state.downloader = downloader
-    scheduler = SubscriptionScheduler(db, downloader)
-    app.state.scheduler = scheduler
-    await downloader.start()
-    await scheduler.start()
-    try:
-        yield
-    finally:
-        await scheduler.stop()
-        await downloader.stop()
+DIST = Path(__file__).resolve().parent / "app" / "static" / "dist"
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="YouHoard", version="0.1.0", lifespan=lifespan)
+def setup_logging() -> None:
+    config.log_dir.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    file_handler = logging.handlers.RotatingFileHandler(
+        config.log_dir / "youhoard.log", maxBytes=10_000_000, backupCount=5, encoding="utf-8"
+    )
+    console = logging.StreamHandler()
+    root = logging.getLogger()
+    root.handlers = []
+    for handler in (file_handler, console):
+        handler.setFormatter(formatter)
+        root.addHandler(handler)
+    root.setLevel(config.LOG_LEVEL.upper())
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def create_app(youtube: YouTube | None = None) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        setup_logging()
+        config.media_root.mkdir(parents=True, exist_ok=True)
+        db = Database(config.database_path)
+        await db.migrate()
+        app.state.db = db
+        app.state.settings = Settings(db)
+        app.state.youtube = youtube or YouTube()
+        app.state.runner = JobRunner(db, app.state.youtube, app.state.settings)
+        await app.state.runner.start()
+        try:
+            yield
+        finally:
+            await app.state.runner.stop()
+
+    app = FastAPI(title="YouHoard", version=__version__, lifespan=lifespan)
+    protected = [Depends(current_user)]
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-    app.include_router(videos.router, prefix="/api/videos", tags=["videos"])
-    app.include_router(channels.router, prefix="/api/channels", tags=["channels"])
-    app.include_router(subscriptions.router, prefix="/api/subscriptions", tags=["subscriptions"])
-    app.include_router(downloads.router, prefix="/api/downloads", tags=["downloads"])
-    app.mount("/app/static/css", StaticFiles(directory=ROOT / "app/static/css"), name="styles")
-    # Build before starting production. Never expose storage or cookie/info sidecars directly.
-    dist = ROOT / "app/static/dist"
-    if (dist / "assets").is_dir():
-        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+    app.include_router(videos.router, prefix="/api/videos", tags=["videos"], dependencies=protected)
+    app.include_router(
+        channels.router, prefix="/api/channels", tags=["channels"], dependencies=protected
+    )
+    app.include_router(
+        subscriptions.router,
+        prefix="/api/subscriptions",
+        tags=["subscriptions"],
+        dependencies=protected,
+    )
+    app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"], dependencies=protected)
+    app.include_router(system.router, prefix="/api", tags=["system"], dependencies=protected)
 
-    @app.get("/api/health")
-    async def health_check():
-        return {"status": "healthy", "message": "YouHoard is running"}
+    @app.get("/api/health", tags=["system"])
+    async def health():
+        return {"status": "ok"}
 
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        if full_path == "api" or full_path.startswith(
-            ("api/", "storage/", "assets/", "app/", "src/")
-        ):
+    if (DIST / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def frontend(path: str):
+        if path == "api" or path.startswith(("api/", "assets/")):
             raise HTTPException(status_code=404, detail="Not found")
-        index = dist / "index.html"
-        if not index.exists():
+        index = DIST / "index.html"
+        if not index.is_file():
             raise HTTPException(
                 status_code=503,
-                detail="Frontend not built. Run npm run build, or use Vite on port 5173.",
+                detail="Frontend not built: run `npm run build`, or use `npm run dev`",
             )
-        return FileResponse(index)
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
     return app
 
@@ -82,4 +96,4 @@ def create_app() -> FastAPI:
 app = create_app()
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=True)
+    uvicorn.run("main:app", host=config.HOST, port=config.PORT, reload=True)

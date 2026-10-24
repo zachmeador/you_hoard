@@ -32,6 +32,10 @@ def later(**delta: float) -> str:
     return iso(utcnow() + timedelta(**delta))
 
 
+def from_timestamp(timestamp: float) -> str:
+    return iso(datetime.fromtimestamp(timestamp, UTC))
+
+
 def parse_time(value: str | None) -> datetime | None:
     if not value:
         return None
