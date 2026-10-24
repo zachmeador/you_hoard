@@ -60,6 +60,25 @@ GONE = (
 )
 
 
+class YtDlpLogger:
+    """Route yt-dlp's messages to logging; a missing channel tab is expected, not an error."""
+
+    def debug(self, message: str) -> None:
+        logger.debug(message)
+
+    def info(self, message: str) -> None:
+        logger.info(message)
+
+    def warning(self, message: str) -> None:
+        logger.warning(message)
+
+    def error(self, message: str) -> None:
+        if "does not have a" in message:
+            logger.info(message)
+        else:
+            logger.error(message)
+
+
 class YouTubeError(Exception):
     """A temporary failure worth retrying later."""
 
@@ -234,7 +253,7 @@ class YouTube:
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
-            "logger": logger,
+            "logger": YtDlpLogger(),
             "socket_timeout": 30,
             "retries": 5,
             "fragment_retries": 10,
