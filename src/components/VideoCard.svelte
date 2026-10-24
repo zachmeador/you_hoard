@@ -1,135 +1,141 @@
 <script>
-  import { createEventDispatcher } from 'svelte'
-  
-  export let video
-  
-  const dispatch = createEventDispatcher()
-  
-  function handleClick() {
-    dispatch('click', video)
-  }
+  /** @import { Video } from '../lib/types' */
+  import { VIDEO_TYPES, date, duration } from '../lib/format.js'
+  import StatusBadge from './StatusBadge.svelte'
+  import Thumb from './Thumb.svelte'
+
+  /** @type {{ video: Video, onopen: () => void }} */
+  let { video, onopen } = $props()
 </script>
 
-<div class="video-card" on:click={handleClick} on:keydown={e => e.key === 'Enter' && handleClick()} tabindex="0" role="button">
-  <div class="video-thumbnail">
-    {#if video.thumbnail_url}
-      <img src={video.thumbnail_url} alt={video.title} loading="lazy" on:error={event => { event.currentTarget.style.display = 'none' }}>
-    {:else}
-      🎬
-    {/if}
-    <div class="video-status-badge status-{video.download_status}">
-      {video.download_status}
+<article class="vcard" class:watched={!!video.watched_at}>
+  <div class="thumb">
+    <Thumb src={video.thumbnail_url} />
+    <div class="flags">
+      {#if video.status !== 'archived'}<StatusBadge status={video.status} />{/if}
+      {#if video.unavailable}<span class="badge badge-danger">Gone from YouTube</span>{/if}
+      {#if video.video_type !== 'video'}<span class="badge">{VIDEO_TYPES[video.video_type]}</span>{/if}
     </div>
+    {#if video.watched_at}<span class="badge badge-ok watched-mark">✓ Watched</span>{/if}
+    {#if video.duration}<span class="duration">{duration(video.duration)}</span>{/if}
   </div>
-  <div class="video-info">
-    <div class="video-title">{video.title}</div>
-    <div class="video-meta">
-      <span class="video-channel">{video.channel_name || 'Unknown Channel'}</span>
-      <span class="video-duration">{window.youHoard.formatDuration(video.duration)}</span>
-    </div>
+  <div class="body">
+    <h2 class="title">
+      <button type="button" class="link-btn stretched" onclick={onopen}><span class="clamp">{video.title}</span></button>
+    </h2>
+    <p class="meta">
+      <span class="truncate">{video.channel?.name ?? 'Unknown channel'}</span>
+      <span class="nowrap">{date(video.published_at)}</span>
+    </p>
   </div>
-</div>
+</article>
 
 <style>
-  .video-card {
+  .vcard {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-lg);
     overflow: hidden;
-    transition: all 0.2s ease;
-    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
   }
 
-  .video-card:hover,
-  .video-card:focus {
-    border-color: var(--primary);
+  .vcard:hover,
+  .vcard:focus-within {
+    border-color: var(--terminal-green);
     box-shadow: var(--glow-primary);
     transform: translateY(-2px);
+  }
+
+  .thumb {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: var(--surface-hover);
+  }
+
+  .watched .thumb :global(.thumb-img) {
+    opacity: 0.55;
+  }
+
+  .flags {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    right: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .watched-mark {
+    position: absolute;
+    left: 4px;
+    bottom: 4px;
+  }
+
+  .duration {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    padding: 0 0.3rem;
+    border-radius: var(--radius-sm);
+    background: rgb(0 0 0 / 0.85);
+    font-size: 0.6875rem;
+    font-weight: 600;
+  }
+
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: var(--space-2) var(--space-3) var(--space-3);
+    min-width: 0;
+  }
+
+  .title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  .stretched {
+    display: block;
+    width: 100%;
+  }
+
+  .stretched::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+
+  .stretched:focus-visible {
     outline: none;
   }
 
-  .video-thumbnail {
-    width: 100%;
-    height: 180px;
-    background: var(--surface-hover);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 2rem;
-    color: var(--text-secondary);
-    position: relative;
+  .stretched:focus-visible::after {
+    outline: 2px solid var(--terminal-green);
+    outline-offset: -2px;
+    border-radius: var(--radius-lg);
   }
 
-  .video-thumbnail img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .video-status-badge {
-    position: absolute;
-    top: var(--space-2);
-    right: var(--space-2);
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: uppercase;
-  }
-
-  .status-completed {
-    background: rgba(0, 255, 136, 0.2);
-    color: var(--terminal-green);
-    border: 1px solid rgba(0, 255, 136, 0.3);
-  }
-
-  .status-downloading {
-    background: rgba(0, 170, 255, 0.2);
-    color: #00aaff;
-    border: 1px solid rgba(0, 170, 255, 0.3);
-  }
-
-  .status-pending {
-    background: rgba(255, 170, 0, 0.2);
-    color: var(--terminal-amber);
-    border: 1px solid rgba(255, 170, 0, 0.3);
-  }
-
-  .status-failed {
-    background: rgba(255, 51, 68, 0.2);
-    color: var(--error);
-    border: 1px solid rgba(255, 51, 68, 0.3);
-  }
-
-  .video-info {
-    padding: var(--space-3);
-  }
-
-  .video-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    line-height: 1.4;
-    margin-bottom: var(--space-2);
+  .clamp {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    overflow-wrap: anywhere;
   }
 
-  .video-meta {
+  .meta {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    gap: var(--space-2);
     font-size: 0.75rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
   }
-
-  .video-channel {
-    font-weight: 500;
-  }
-
-  .video-duration {
-    font-family: var(--font-mono);
-  }
-</style> 
+</style>

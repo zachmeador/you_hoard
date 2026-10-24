@@ -1,146 +1,98 @@
 <script>
-  import { onMount } from 'svelte'
-  import Router from 'svelte-spa-router'
-  import { authStore, authApi } from './stores/auth.js'
-  import Home from './pages/Home.svelte'
-  import Videos from './pages/Videos.svelte'
-  import Channels from './pages/Channels.svelte'
-  import Subscriptions from './pages/Subscriptions.svelte'
-  import Downloads from './pages/Downloads.svelte'
-  import Settings from './pages/Settings.svelte'
+  import { onMount, untrack } from 'svelte'
+  import { auth } from './lib/auth.svelte.js'
+  import { poll } from './lib/poll.js'
+  import { queue } from './lib/queue.svelte.js'
+  import { matchRoute, router } from './lib/router.svelte.js'
+  import { librarySettings } from './lib/settings.svelte.js'
+  import { ui } from './lib/ui.svelte.js'
+  import AddVideoDialog from './components/AddVideoDialog.svelte'
+  import ConfirmHost from './components/ConfirmHost.svelte'
   import Navigation from './components/Navigation.svelte'
-  import AddVideoModal from './components/AddVideoModal.svelte'
-  import LoginForm from './components/LoginForm.svelte'
-  import ToastContainer from './components/ToastContainer.svelte'
+  import Toasts from './components/Toasts.svelte'
+  import Auth from './pages/Auth.svelte'
+  import Channels from './pages/Channels.svelte'
+  import Library from './pages/Library.svelte'
+  import NotFound from './pages/NotFound.svelte'
+  import Queue from './pages/Queue.svelte'
+  import Settings from './pages/Settings.svelte'
+  import SubscriptionDetail from './pages/SubscriptionDetail.svelte'
+  import Subscriptions from './pages/Subscriptions.svelte'
 
-  const routes = {
-    '/': Home,
-    '/videos': Videos,
-    '/channels': Channels,
-    '/subscriptions': Subscriptions,
-    '/downloads': Downloads,
-    '/settings': Settings
-  }
-
-  let showAddVideoModal = false
+  const route = $derived(matchRoute(router.path))
 
   onMount(() => {
-    authApi.init()
+    auth.check()
   })
 
-  // Global utilities
-  window.youHoard = {
-    showModal: (modalId) => {
-      if (modalId === 'add-video-modal') showAddVideoModal = true
-    },
-    hideModal: (modalId) => {
-      if (modalId === 'add-video-modal') showAddVideoModal = false
-    },
-    showToast: (message, type = 'info', duration = 5000) => {
-      document.dispatchEvent(new CustomEvent('show-toast', {
-        detail: { message, type, duration }
-      }))
-    },
-    apiCall: async (url, options = {}) => {
-      const config = { 
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        ...options
-      }
-      
-      try {
-        const response = await fetch(url, config)
-        
-        if (!response.ok) {
-          if (response.status === 401) authApi.expire()
-          const body = await response.json().catch(() => ({}))
-          const detail = body.detail
-          const message = Array.isArray(detail) ? detail.map(item => item.msg).join('; ')
-            : typeof detail === 'object' && detail ? detail.message : detail
-          throw new Error(message || `Request failed (${response.status})`)
-        }
-        
-        return await response.json()
-      } catch (error) {
-        console.error('API call failed:', error)
-        throw error
-      }
-    },
-    formatFileSize: (bytes) => {
-      if (!Number.isFinite(bytes) || bytes <= 0) return '0 Bytes'
-      const k = 1024
-      const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
-      const i = Math.floor(Math.log(bytes) / Math.log(k))
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-    },
-    formatDuration: (seconds) => {
-      if (!seconds) return 'Unknown'
-      const hours = Math.floor(seconds / 3600)
-      const minutes = Math.floor((seconds % 3600) / 60)
-      const secs = Math.floor(seconds % 60)
-      if (hours > 0) {
-        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-      }
-      return `${minutes}:${secs.toString().padStart(2, '0')}`
-    },
-    formatDate: (dateString) => {
-      if (!dateString) return 'Unknown'
-      const date = new Date(dateString)
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric', month: 'short', day: 'numeric'
-      })
-    },
-    formatRelativeTime: (dateString) => {
-      if (!dateString) return 'Unknown'
-      const date = new Date(dateString)
-      const now = new Date()
-      const diffInSeconds = Math.floor((now - date) / 1000)
-      if (diffInSeconds < 60) return 'Just now'
-      if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`
-      if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`
-      if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)} days ago`
-      return window.youHoard.formatDate(dateString)
-    },
-    escapeHtml: (text) => {
-      if (!text) return ''
-      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }
-      return text.replace(/[&<>"']/g, m => map[m])
+  $effect(() => {
+    if (auth.phase !== 'ready') {
+      untrack(() => (ui.addVideoOpen = false))
+      return
     }
-  }
+    untrack(() => librarySettings.load().catch(() => {}))
+    return poll(() => queue.refresh(), 5000)
+  })
 </script>
 
-{#if $authStore.loading}
-  <div class="auth-loading">
-    <div class="spinner"></div>
-    <p>Loading...</p>
-  </div>
-{:else if $authStore.isAuthenticated}
-  <!-- Full app when authenticated -->
-  <Navigation on:addVideo={() => showAddVideoModal = true} />
-  <main class="main-content">
-    <Router {routes} />
+{#if auth.phase === 'ready'}
+  <Navigation />
+  <main class="app-main">
+    {#key router.path}
+      {#if route.name === 'library'}
+        <Library />
+      {:else if route.name === 'channels'}
+        <Channels />
+      {:else if route.name === 'subscriptions'}
+        <Subscriptions />
+      {:else if route.name === 'subscription'}
+        <SubscriptionDetail id={route.id} />
+      {:else if route.name === 'queue'}
+        <Queue />
+      {:else if route.name === 'settings'}
+        <Settings />
+      {:else}
+        <NotFound />
+      {/if}
+    {/key}
   </main>
-  <AddVideoModal bind:show={showAddVideoModal} />
+  {#if ui.addVideoOpen}
+    <AddVideoDialog onclose={() => (ui.addVideoOpen = false)} />
+  {/if}
+{:else if auth.phase === 'setup' || auth.phase === 'login'}
+  <Auth mode={auth.phase} />
+{:else if auth.phase === 'offline'}
+  <div class="splash">
+    <p class="nav-brand">YouHoard</p>
+    <p class="error-text">Can't reach the server: {auth.error}</p>
+    <button type="button" class="btn btn-secondary" onclick={() => auth.check()}>Try again</button>
+  </div>
 {:else}
-  <!-- Login form when not authenticated -->
-  <LoginForm />
+  <div class="splash" aria-busy="true">
+    <p class="nav-brand">YouHoard</p>
+    <p class="muted"><span class="spinner"></span> Loading…</p>
+  </div>
 {/if}
 
-<ToastContainer />
+<ConfirmHost />
+<Toasts />
 
 <style>
-  :global(body) {
-    margin: 0;
-    padding: 0;
-  }
-  
-  .auth-loading {
+  .splash {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100vh;
     gap: var(--space-4);
-    color: var(--text-secondary);
+    min-height: 100vh;
+    padding: var(--space-4);
+    text-align: center;
   }
-</style> 
+
+  .nav-brand {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--terminal-green);
+    text-shadow: 0 0 10px var(--primary-glow);
+  }
+</style>

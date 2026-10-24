@@ -4,21 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"uv run main.py\" \"vite\" --names \"backend,frontend\" --prefix-colors \"blue,green\"",
-    "dev:frontend": "vite",
+    "dev": "concurrently -n backend,frontend \"uv run python main.py\" \"vite\"",
     "build": "vite build",
-    "preview": "vite preview",
     "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^3.0.0",
-    "concurrently": "^8.2.2",
-    "svelte": "^4.2.0",
-    "svelte-check": "^3.6.0",
-    "typescript": "^5.2.0",
-    "vite": "^5.0.0"
-  },
-  "dependencies": {
-    "svelte-spa-router": "^4.0.1"
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "concurrently": "^10.0.6",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.7",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5"
   }
-} 
+}
