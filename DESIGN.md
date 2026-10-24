@@ -97,3 +97,11 @@ Svelte 5 single-page app in `src/`, built by Vite into `app/static/dist` and ser
 ## Configuration
 
 Environment variables (or `.env`): `DATA_DIR` (database, logs), `MEDIA_DIR` (library), `HOST`, `PORT`, `LOG_LEVEL`, `YTDLP_COOKIE_FILE`, `YTDLP_JS_RUNTIME` (default `deno`, installed with yt-dlp's `deno` extra), `YTDLP_REQUEST_INTERVAL`. Everything else is a runtime setting in the UI.
+
+## Command line
+
+`python -m app` (`app/__main__.py`): `import-tubearchivist`, `rescan` (the same job as the UI button), `backup <path>` (SQLite online backup, safe while running) and `reset-password <user>`.
+
+## Packaging
+
+`Dockerfile` builds the frontend, then a Python image with ffmpeg and the locked dependencies (including Deno), running as UID 1000 with `/data` and `/media` volumes. `YTDLP_UPDATE_ON_START=1` upgrades yt-dlp at container start. CI runs lint, tests, the frontend check/build and an image build; Dependabot bumps the lockfile weekly.

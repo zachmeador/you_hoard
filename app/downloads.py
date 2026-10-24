@@ -1,6 +1,7 @@
 """The download job: fetch one video into the library with its sidecars."""
 
 import asyncio
+import shutil
 import threading
 from typing import Any
 
@@ -8,7 +9,7 @@ from app import layout
 from app.db import fetch_one, loads, now
 from app.jobs import JobRunner, Progress
 from app.library import record_archived, save_video_info, write_info_json
-from app.youtube import DownloadRequest, Unavailable
+from app.youtube import Cancelled, DownloadRequest, Unavailable
 
 
 async def run_download(
@@ -36,6 +37,10 @@ async def run_download(
     progress = runner.progress.setdefault(job["id"], Progress())
     try:
         info = await runner.youtube.download(request, progress.update, cancel)
+    except Cancelled:
+        if not runner.stopping:
+            await asyncio.to_thread(shutil.rmtree, request.workdir, True)
+        raise
     except Unavailable:
         await db.execute(
             "UPDATE videos SET unavailable_at = coalesce(unavailable_at, ?) WHERE id = ?",

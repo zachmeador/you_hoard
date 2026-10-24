@@ -375,6 +375,8 @@ class YouTube:
         languages = request.subtitle_languages
         options = self.options(
             format=f"bv*{cap}+ba/b{cap}/bv*+ba/b",
+            # Resolution first, then the most playable container and codec at that resolution.
+            format_sort=["res", "ext:mp4:m4a", "vcodec:h264"],
             merge_output_format="mp4/mkv",
             paths={"home": str(request.workdir), "temp": str(request.workdir)},
             outtmpl={"default": "media.%(ext)s"},

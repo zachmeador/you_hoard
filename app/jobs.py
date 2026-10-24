@@ -90,6 +90,10 @@ class JobRunner:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
 
+    @property
+    def stopping(self) -> bool:
+        return self._stopping
+
     def wake(self) -> None:
         self._wake.set()
 

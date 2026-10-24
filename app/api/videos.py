@@ -1,6 +1,7 @@
 """The library: list, add, download, remove and play videos."""
 
 import asyncio
+import shutil
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -189,6 +190,7 @@ async def delete_video(video_id: int, db: Database = Depends(get_db)):
             await asyncio.to_thread(layout.remove_media, video["media_path"], video["youtube_id"])
         except layout.PathError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+    await asyncio.to_thread(shutil.rmtree, layout.incomplete_dir(video["youtube_id"]), True)
     await db.execute(
         "UPDATE videos SET media_path = NULL, media_size = NULL, width = NULL, height = NULL, "
         "deleted_at = ?, updated_at = ? WHERE id = ?",

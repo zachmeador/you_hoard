@@ -47,8 +47,12 @@ def test_running_downloads_can_be_cancelled(archive):
     video = add(archive)
     running = archive.wait_job(video["job_id"], "running")
     assert running["progress"]["percent"] == 10.0
+    workdir = archive.media / ".youhoard" / "incomplete" / VIDEO
+    workdir.mkdir(parents=True, exist_ok=True)
+    (workdir / "media.mp4.part").write_bytes(b"partial")
     assert archive.client.post(f"/api/jobs/{running['id']}/cancel").status_code == 200
     archive.wait_job(running["id"], "cancelled")
+    assert not workdir.exists()
     assert archive.client.get(f"/api/videos/{video['id']}").json()["status"] == "missing"
     assert archive.client.post(f"/api/jobs/{running['id']}/cancel").status_code == 409
 
