@@ -11,7 +11,7 @@ dependencies = [
     "pydantic>=2.11.0",
     "pydantic-settings>=2.10.0",
     "uvicorn[standard]>=0.38.0",
-    "yt-dlp[default,deno]>=2026.10.21",
+    "yt-dlp[default,deno,curl-cffi]>=2026.10.21",
 ]
 
 [dependency-groups]

@@ -20,5 +20,10 @@ APScheduler, passlib/bcrypt, jinja2, python-multipart. Also: the 485-line startu
 ## Verification
 
 - Integration tests drive the HTTP API against temporary SQLite and media folders with a fake YouTube: auth, library, subscriptions and policies, the queue, rescans and the TubeArchivist import.
-- A live smoke test against YouTube on 2026-10-24 (results in the PR/commit notes).
+- Live checks against YouTube on 2026-10-24, through the real app with yt-dlp 2026.10.21 and Deno 2.9.8:
+  - Manual adds downloaded as MP4 with thumbnail, VTT and slimmed `.info.json`. Big Buck Bunny capped at 1080p came out as real 1080p H.264.
+  - Progress reported bytes, speed and ETA; cancelling mid-transfer aborted yt-dlp.
+  - `@jawed` resolved to its channel ID, and the missing Shorts/Streams tabs were handled.
+  - TED's first complete listing (5,856 entries across Videos and Shorts) took about 4 minutes. The next routine check stopped after reaching known uploads: 20 entries in 3 seconds.
+- Offline against yt-dlp's real format selector: the 1440p/2160p caps produce 1440p/2160p.
 - Not verified locally: the Docker image build (no Docker on the development machine; CI builds it), and the TubeArchivist import against a real backup.
