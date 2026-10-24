@@ -28,22 +28,34 @@ Open `http://localhost:5173`. The API runs on port 8000. For a production-style 
 
 ## Moving from TubeArchivist
 
-1. **Copy TubeArchivist's metadata somewhere safe first.** Metadata for videos that have disappeared from YouTube exists only in its Elasticsearch data. Keep the backup zips from TubeArchivist's `cache/backup` folder, plus a copy of its Elasticsearch volume.
-2. Point `MEDIA_DIR` (or the `/media` mount) at TubeArchivist's media folder, or at a folder that contains it.
-3. Preview the import. It is a dry run and changes nothing:
+1. **Make a fresh backup.** Start TubeArchivist once; it does not need to download anything. Then use Settings → Actions → Backup. That writes a zip of all its metadata to its `cache/backup` folder. Stop it again. For extra safety, also keep a copy of its Elasticsearch volume: metadata for videos that have since left YouTube exists nowhere else.
+2. **Point YouHoard at the files.** Set `MEDIA_DIR` (or the `/media` mount) to TubeArchivist's media folder, or to a folder containing it on the same filesystem.
+3. **Preview the import.** This is a dry run and writes nothing:
 
    ```sh
-   uv run python -m app import-tubearchivist --backup /path/to/ta_backup.zip --ta-cache /path/to/ta/cache
+   uv run python -m app import-tubearchivist --backup /path/to/ta/cache/backup/ta_backup-….zip
    ```
 
-   Add `--ta-media <folder>` if the TubeArchivist media folder is a subfolder of `MEDIA_DIR`. With Docker: `docker compose exec youhoard python -m app import-tubearchivist …`. A live Elasticsearch works too: `--es-url http://host:9200 --es-password …`.
-4. Run it again with `--apply`. Files stay where they are. It adds channels, videos (watched state, removed-from-YouTube flag), subscribed channels and playlists (set to download only new uploads), the ignore list, `.info.json` sidecars with comments, and thumbnails from the cache.
-5. Optionally add `--organize` to rename files into YouHoard's readable layout. Renames happen on the same filesystem; nothing is copied or re-downloaded.
+   - Add `--ta-media <folder>` when TubeArchivist's media folder is a subfolder of `MEDIA_DIR`.
+   - The cache folder, used for thumbnails, is found next to the backup; otherwise pass `--ta-cache`.
+   - With Docker: `docker compose exec youhoard python -m app import-tubearchivist …`.
+   - The importer can also read a running Elasticsearch: `--es-url http://host:9200` with `TA_ES_PASSWORD` set.
+
+   Read the counts and warnings: videos matched to files, missing files, orphans, subscriptions, the ignore list and comments.
+4. **Apply it.** Run the same command with `--apply`. Files stay exactly where they are, and older TubeArchivist file names work too. It adds:
+   - channels and videos, with watched state and the removed-from-YouTube flag;
+   - subscribed channels (keeping the tabs you followed) and playlists, set to download only new uploads;
+   - the ignore list;
+   - an `.info.json` with comments next to each video, plus its thumbnail from the cache.
+
+   Running it again changes nothing.
+5. **Optionally organize.** Once you trust it, run with `--apply --organize` to rename files into YouHoard's readable layout. It uses same-filesystem renames, never overwrites, and never re-downloads.
 
 ## Other commands
 
 ```sh
 uv run python -m app rescan                  # reconcile the database with the media folder
+uv run python -m app backup <file>           # copy the database safely while it runs
 uv run python -m app reset-password <user>   # set a new password
 ```
 

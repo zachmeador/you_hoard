@@ -26,4 +26,9 @@ APScheduler, passlib/bcrypt, jinja2, python-multipart. Also: the 485-line startu
   - `@jawed` resolved to its channel ID, and the missing Shorts/Streams tabs were handled.
   - TED's first complete listing (5,856 entries across Videos and Shorts) took about 4 minutes. The next routine check stopped after reaching known uploads: 20 entries in 3 seconds.
 - Offline against yt-dlp's real format selector: the 1440p/2160p caps produce 1440p/2160p.
-- Not verified locally: the Docker image build (no Docker on the development machine; CI builds it), and the TubeArchivist import against a real backup.
+- TubeArchivist import:
+  - Formats were read from TubeArchivist's source, v0.1.7 to master.
+  - 33 integration tests run against synthetic backups.
+  - A synthetic 20k-video, 857k-comment library: dry run 4.6 s, `--apply --organize` 39 s, re-run 6.2 s, about 150 MB of memory.
+  - An independent review pass found bugs: a fill-in gap, a corrupt zip member aborting the run, sidecar overwrites and stale backup files. They are fixed and covered by tests.
+- Not verified: the Docker image build (no Docker on the development machine; CI builds it), and the import against a real TubeArchivist backup.

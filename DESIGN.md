@@ -75,7 +75,22 @@ Transient failures retry with backoff (15 min, 1 h, 4 h) before failing. "Video 
 
 ## TubeArchivist import
 
-`python -m app import-tubearchivist` reads a TubeArchivist backup zip (nd-json in `/cache/backup`) or a live Elasticsearch, matches each video to `<ta media>/<channel id>/<video id>.mp4`, and reports what it would do. With `--apply` it adds channels, videos (watched state, unavailable flag, type), subscribed channels/playlists (policy `new`, checks spread over the next day) and TubeArchivist's ignore list (as removed videos). It writes `.info.json` sidecars (including comments) and copies thumbnails from TubeArchivist's cache. `--organize` also renames files into the layout above (same-filesystem renames; nothing is copied or re-downloaded).
+`python -m app import-tubearchivist` (`app/tubearchivist.py`) reads a TubeArchivist backup zip or a live Elasticsearch. Formats were checked against TubeArchivist's source from v0.1.7 to current master.
+
+- Backups are Elasticsearch bulk files (`es_<index>-<date>-<page>.json`). Older single-file and versioned-index variants are handled; leftovers from earlier, unfinished backups are skipped and listed.
+- Each video is matched to `<ta media>/<channel id>/<video id>.mp4`. Pre-0.4 names (`<YYYYMMDD>_<id>_<title>.mp4`) are recognized everywhere in YouHoard.
+- Without `--apply` nothing is written and the report lists what would happen.
+- With `--apply` it adds:
+  - channels;
+  - videos: type, watched state, `unavailable_at` for TubeArchivist's inactive videos, real file size and resolution, download date;
+  - subscribed channels, with content types from TubeArchivist's per-tab limits and policy `new`, with checks spread over a day;
+  - subscribed playlists, with their entries as inventory;
+  - TubeArchivist's ignore list, as removed videos;
+  - `.info.json` sidecars, holding comments in yt-dlp's format and the raw TubeArchivist document;
+  - thumbnails, copied from TubeArchivist's cache.
+- Re-runs change nothing.
+- `--organize` renames media and sidecars into the YouHoard layout. It refuses to cross filesystems, never overwrites, rolls back a partial rename, and resumes after an interruption.
+- Not imported, only counted: pending downloads, custom playlists, unsubscribed playlists.
 
 ## API
 
