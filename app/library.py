@@ -75,7 +75,7 @@ def slim_info(info: dict[str, Any]) -> dict[str, Any]:
 
 def write_info_json(path: Path, info: dict[str, Any]) -> None:
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(slim_info(info), ensure_ascii=False, indent=1))
+    temporary.write_text(json.dumps(slim_info(info), ensure_ascii=False, indent=1), "utf-8")
     temporary.replace(path)
 
 

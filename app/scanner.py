@@ -41,9 +41,9 @@ def channel_from_folder(folder: str) -> tuple[str, str] | None:
     """(channel id, name) from "<name> [<id>]" or TubeArchivist's bare "<id>" folders."""
     if folder.endswith("]") and " [" in folder:
         name, _, channel_id = folder[:-1].rpartition(" [")
-        if layout.CHANNEL_ID.fullmatch(channel_id):
+        if layout.YOUTUBE_CHANNEL_ID.fullmatch(channel_id):
             return channel_id, name
-    if folder.startswith("UC") and layout.CHANNEL_ID.fullmatch(folder):
+    if layout.YOUTUBE_CHANNEL_ID.fullmatch(folder):
         return folder, folder
     return None
 
@@ -147,12 +147,14 @@ def _read_info(media: Path) -> dict[str, Any] | None:
     if path is None:
         return None
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text("utf-8"))
     except (OSError, ValueError):
         return None
 
 
 def _title(media: Path) -> str:
+    if legacy := layout.LEGACY_TA_NAME.match(media.stem):
+        return media.stem[legacy.end() :].replace("_", " ").strip() or media.stem
     stem = layout.BRACKETED_ID.sub("", media.stem).strip()
     if len(stem) > 11 and layout.DATE.fullmatch(stem[:10]):
         stem = stem[10:].strip()

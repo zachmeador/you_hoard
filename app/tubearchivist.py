@@ -74,9 +74,6 @@ SIZE_SETTINGS = {
     "short": ("subscriptions_shorts_channel_size", "shorts_channel_size"),
     "live": ("subscriptions_live_channel_size", "live_channel_size"),
 }
-TA_CHANNEL_FOLDER = re.compile(r"UC[A-Za-z0-9_-]{22}")
-# Media names before TubeArchivist 0.4: <YYYYMMDD>_<video id>_<title>.mp4 in a channel-name folder.
-LEGACY_NAME = re.compile(r"\d{8}_([A-Za-z0-9_-]{11})_")
 # Folder names TubeArchivist's own scanner skips (besides dot-folders).
 IGNORED_FOLDERS = {"@eaDir", "Icon\r\r", "Network Trash Folder", "Temporary Items"}
 BATCH = 500
@@ -90,12 +87,8 @@ MAX_EPOCH = 253402300799  # 9999-12-31
 BACKUP_DATE = re.compile(r"[-_](\d{8})(?=[-.])")
 
 UNRECOGNIZED_NAME = (
-    "files kept under names YouHoard cannot match to their video (pre-0.4 TubeArchivist naming); "
-    "a library rescan will mark them missing, so import or re-run with --organize to rename them"
-)
-LEGACY_ORPHAN = (
-    "orphan files under pre-0.4 TubeArchivist names, which YouHoard cannot match to their video; "
-    "rename them to <video id>.mp4, otherwise a library rescan will mark them missing"
+    "files kept under names without their video ID; a library rescan will mark them missing, "
+    "so re-run with --organize to rename them"
 )
 EXTRA_COPY = "extra copies of videos that already have a file (left alone)"
 SYMLINK = "symbolic links to video files (not imported; YouHoard needs the files themselves)"
@@ -290,23 +283,13 @@ def _shown(path: Path) -> str:
         return str(path)
 
 
-def media_id(path: Path) -> str | None:
-    """The video ID a media file's name carries, including TA's pre-0.4 names."""
-    if path.suffix.lower() not in layout.VIDEO_EXTENSIONS:
-        return None
-    if youtube_id := layout.video_id_from_media(path):
-        return youtube_id
-    match = LEGACY_NAME.match(path.stem)
-    return match.group(1) if match else None
-
-
 def folder_channel(folder: str) -> ChannelInfo | None:
     """The channel of TA's "<channel id>" or YouHoard's "<name> [<channel id>]" folders."""
-    if TA_CHANNEL_FOLDER.fullmatch(folder):
+    if layout.YOUTUBE_CHANNEL_ID.fullmatch(folder):
         return ChannelInfo(folder)
     if folder.endswith("]") and " [" in folder:
         name, _, channel_id = folder[:-1].rpartition(" [")
-        if TA_CHANNEL_FOLDER.fullmatch(channel_id):
+        if layout.YOUTUBE_CHANNEL_ID.fullmatch(channel_id):
             return ChannelInfo(channel_id, name or None)
     return None
 
@@ -1034,7 +1017,7 @@ class Importer:
                     continue
                 if not entry.is_file():
                     continue
-                if youtube_id := media_id(path):
+                if youtube_id := layout.video_id_from_media(path):
                     found.setdefault(youtube_id, []).append(path)
                 elif report:
                     self.report.warn(
@@ -1122,20 +1105,14 @@ class Importer:
         return channel
 
     def channel_dir(self, channel: ChannelInfo) -> Path:
-        """layout.channel_dir's answer from a single listing of MEDIA_DIR: that helper lists the
-        whole folder for every call, which is slow on network storage with many channels."""
+        """Channel folders from one listing of MEDIA_DIR, which may be slow network storage."""
         if self.dirs is None:
-            self.dirs = {}
-            with suppress(OSError):
-                for entry in sorted(os.scandir(config.media_root), key=lambda entry: entry.name):
-                    name = entry.name
-                    if name.endswith("]") and "[" in name and entry.is_dir():
-                        self.dirs.setdefault(name[name.rfind("[") + 1 : -1], Path(entry.path))
-        youtube_id = channel.youtube_id
-        if youtube_id not in self.dirs:
-            folder = f"{layout.clean(channel.name, 120)} [{youtube_id}]"
-            self.dirs[youtube_id] = config.media_root / folder
-        return self.dirs[youtube_id]
+            self.dirs = layout.channel_folders()
+        if channel.youtube_id not in self.dirs:
+            self.dirs[channel.youtube_id] = layout.channel_dir(
+                channel.youtube_id, channel.name, self.dirs
+            )
+        return self.dirs[channel.youtube_id]
 
     # Videos
 
@@ -1295,7 +1272,7 @@ class Importer:
             if not _is_video_name(path.name):
                 self.report.warn("media_url entries that are not video files", _shown(path))
                 continue
-            found = media_id(path)
+            found = layout.video_id_from_media(path)
             if found is not None and found != youtube_id:
                 self.report.warn(
                     "media_url entries naming another video's file (ignored)",
@@ -1473,15 +1450,15 @@ class Importer:
                 if youtube_id in self.videos or youtube_id in self.orphan_ids:
                     self.report.warn(EXTRA_COPY, relative)
                     continue
-                if not (layout.VIDEO_ID.fullmatch(path.stem) or LEGACY_NAME.match(path.stem)):
+                if not (
+                    layout.VIDEO_ID.fullmatch(path.stem) or layout.LEGACY_TA_NAME.match(path.stem)
+                ):
                     self.report.warn(
                         "video files that are neither TubeArchivist's nor in the database "
                         "(left alone; a library rescan adds them)",
                         relative,
                     )
                     continue
-                if layout.video_id_from_media(path) != youtube_id:
-                    self.report.warn(LEGACY_ORPHAN, relative)
                 channel = self.orphan_channel(path.parent.name)
                 thumbnail = None
                 if layout.thumbnail_for(path) is None:

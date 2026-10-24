@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app import tubearchivist
+from app import layout, tubearchivist
 from app.config import config
 from app.db import Database, iso
 from app.library import ensure_video, record_archived, save_video_info, upsert_channel
@@ -969,7 +969,8 @@ def test_bracketed_folder_names_are_not_channel_ids(ta_library: TaLibrary) -> No
     assert not ta_library.rows("SELECT * FROM channels WHERE youtube_id = 'Official'")
 
 
-def test_legacy_names_are_renamed_by_a_later_organize(ta_library: TaLibrary) -> None:
+def ta_use_legacy_name(ta_library: TaLibrary) -> Path:
+    """Rename A1 to TubeArchivist's pre-0.4 naming and point its document at it."""
     legacy = ta_library.ta_media / "Alpha Channel" / f"20231103_{A1}_Alpha video one.mp4"
     legacy.parent.mkdir()
     (ta_library.ta_media / CHANNEL_A / f"{A1}.mp4").rename(legacy)
@@ -977,14 +978,24 @@ def test_legacy_names_are_renamed_by_a_later_organize(ta_library: TaLibrary) -> 
     documents = ta_documents()
     documents["video"][0][1]["media_url"] = legacy.relative_to(ta_library.ta_media).as_posix()
     ta_write_backup(ta_library.backup, documents)
+    return legacy
+
+
+def test_legacy_names_work_in_place(ta_library: TaLibrary) -> None:
+    legacy = ta_use_legacy_name(ta_library)
 
     code, output = ta_library.run("--apply")
 
     assert code == 0, output
-    assert ta_library.video(A1)["media_path"] == (
-        f"tubearchivist/Alpha Channel/20231103_{A1}_Alpha video one.mp4"
-    )
-    assert "files kept under names YouHoard cannot match to their video" in output
+    stored = ta_library.video(A1)["media_path"]
+    assert stored == f"tubearchivist/Alpha Channel/20231103_{A1}_Alpha video one.mp4"
+    assert layout.video_id_from_media(legacy) == A1
+    assert set(layout.subtitles_for(legacy)) == {"en"}
+    assert "names without their video ID" not in output
+
+
+def test_legacy_names_are_renamed_by_organize(ta_library: TaLibrary) -> None:
+    ta_use_legacy_name(ta_library)
 
     code, output = ta_library.run("--apply", "--organize")
 
@@ -993,9 +1004,6 @@ def test_legacy_names_are_renamed_by_a_later_organize(ta_library: TaLibrary) -> 
     assert ta_library.video(A1)["media_path"] == f"{base}.mp4"
     assert (ta_library.media / f"{base}.en.vtt").read_text() == "WEBVTT\n"
     assert ta_info(ta_library.media / f"{base}.info.json")["id"] == A1
-    assert "Repaired                1 of them" in output
-    # Videos with usable names that were imported in place stay where they are.
-    assert ta_library.video(A2)["media_path"] == f"tubearchivist/{CHANNEL_A}/{A2}.mp4"
 
 
 def test_files_that_cannot_be_imported_are_reported(ta_library: TaLibrary) -> None:

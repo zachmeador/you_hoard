@@ -23,6 +23,9 @@ VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 CHANNEL_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 SUBTITLE_LANGUAGE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 BRACKETED_ID = re.compile(r"\[([A-Za-z0-9_-]{11})\]$")
+# TubeArchivist before 0.4 named files <YYYYMMDD>_<video id>_<title>.mp4.
+LEGACY_TA_NAME = re.compile(r"\d{8}_([A-Za-z0-9_-]{11})_")
+YOUTUBE_CHANNEL_ID = re.compile(r"UC[A-Za-z0-9_-]{22}")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 APP_DIR = ".youhoard"
 
@@ -54,7 +57,10 @@ def video_id_from_media(path: Path) -> str | None:
         return None
     if match := BRACKETED_ID.search(path.stem):
         return match.group(1)
-    return path.stem if VIDEO_ID.fullmatch(path.stem) else None
+    if VIDEO_ID.fullmatch(path.stem):
+        return path.stem
+    match = LEGACY_TA_NAME.match(path.stem)
+    return match.group(1) if match else None
 
 
 def incomplete_dir(youtube_id: str) -> Path:
@@ -63,16 +69,27 @@ def incomplete_dir(youtube_id: str) -> Path:
     return config.media_root / APP_DIR / "incomplete" / youtube_id
 
 
-def channel_dir(channel_youtube_id: str, channel_name: str | None) -> Path:
+def channel_folders() -> dict[str, Path]:
+    """Existing "<name> [<channel id>]" folders in MEDIA_DIR by channel ID, from one listing."""
+    folders: dict[str, Path] = {}
+    root = config.media_root
+    if root.is_dir():
+        for path in sorted(root.iterdir()):
+            name = path.name
+            if name.endswith("]") and " [" in name and path.is_dir():
+                folders.setdefault(name[name.rfind(" [") + 2 : -1], path)
+    return folders
+
+
+def channel_dir(
+    channel_youtube_id: str, channel_name: str | None, folders: dict[str, Path] | None = None
+) -> Path:
+    """A channel's folder: the existing one for its ID, else a new name. Pass `folders` from
+    channel_folders() when placing many files, to list MEDIA_DIR once."""
     if not CHANNEL_ID.fullmatch(channel_youtube_id):
         raise PathError("Invalid channel ID")
-    root = config.media_root
-    suffix = f"[{channel_youtube_id}]"
-    if root.is_dir():
-        for path in root.iterdir():
-            if path.is_dir() and path.name.endswith(suffix):
-                return path
-    return root / f"{clean(channel_name, 120)} {suffix}"
+    found = (channel_folders() if folders is None else folders).get(channel_youtube_id)
+    return found or config.media_root / f"{clean(channel_name, 120)} [{channel_youtube_id}]"
 
 
 def video_basename(youtube_id: str, title: str | None, published_at: str | None) -> str:

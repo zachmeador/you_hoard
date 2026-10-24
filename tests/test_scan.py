@@ -29,18 +29,22 @@ def test_rescan_adds_files_with_and_without_sidecars(archive):
             }
         )
     )
-    tubearchivist = archive.media / "UCtubearchivistLayout1234"
+    tubearchivist = archive.media / "UCtubearchivistLayout123"
     tubearchivist.mkdir()
     (tubearchivist / "jNQXAC9IVRw.mp4").write_bytes(MEDIA)
+    legacy = archive.media / "Old Channel Name"
+    legacy.mkdir()
+    (legacy / "20190308_M7lc1UVf-VE_Old naming.mp4").write_bytes(MEDIA)
     (archive.media / ".youhoard" / "incomplete" / "aqz-KE-bpKQ").mkdir(parents=True)
     (archive.media / ".youhoard" / "incomplete" / "aqz-KE-bpKQ" / "media.mp4").write_bytes(MEDIA)
 
-    assert rescan(archive) == {"files": 2, "added": 2, "relinked": 0, "missing": 0, "duplicates": 0}
+    assert rescan(archive) == {"files": 3, "added": 3, "relinked": 0, "missing": 0, "duplicates": 0}
     videos = {v["youtube_id"]: v for v in archive.client.get("/api/videos").json()["items"]}
     assert videos["AK47SC6kr_A"]["title"] == "A Title"
     assert videos["AK47SC6kr_A"]["published_at"] == "2020-02-02"
     assert videos["AK47SC6kr_A"]["quality"] == "720p"
-    assert videos["jNQXAC9IVRw"]["channel"]["youtube_id"] == "UCtubearchivistLayout1234"
+    assert videos["jNQXAC9IVRw"]["channel"]["youtube_id"] == "UCtubearchivistLayout123"
+    assert videos["M7lc1UVf-VE"]["title"] == "Old naming"
     assert all(video["status"] == "archived" for video in videos.values())
     assert rescan(archive)["added"] == 0
 
