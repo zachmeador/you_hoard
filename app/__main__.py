@@ -3,8 +3,10 @@
 import argparse
 import asyncio
 import getpass
+import sqlite3
 import sys
 import threading
+from pathlib import Path
 
 from app import tubearchivist
 from app.auth import hash_password
@@ -45,6 +47,21 @@ async def reset_password(args: argparse.Namespace, db: Database) -> int:
     return 0
 
 
+async def backup(args: argparse.Namespace, db: Database) -> int:
+    target = Path(args.path)
+    if target.exists():
+        print(f"{target} already exists.", file=sys.stderr)
+        return 1
+
+    def copy() -> None:
+        with sqlite3.connect(db.path) as source, sqlite3.connect(target) as destination:
+            source.backup(destination)
+
+    await asyncio.to_thread(copy)
+    print(f"Database copied to {target}. Media files are not included.")
+    return 0
+
+
 async def import_tubearchivist(args: argparse.Namespace, db: Database) -> int:
     return await tubearchivist.run(args, db, sys.stdout)
 
@@ -55,6 +72,9 @@ def main() -> int:
     commands.add_parser("rescan", help="Reconcile the database with the media folder").set_defaults(
         func=rescan
     )
+    copy = commands.add_parser("backup", help="Copy the database safely while the app runs")
+    copy.add_argument("path")
+    copy.set_defaults(func=backup)
     reset = commands.add_parser("reset-password", help="Set a new password for a user")
     reset.add_argument("username")
     reset.set_defaults(func=reset_password)

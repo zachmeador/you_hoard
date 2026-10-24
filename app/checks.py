@@ -83,7 +83,7 @@ async def run_check(
                             entry.title,
                             entry.duration,
                             position,
-                            first,
+                            first and entry.live_status not in NOT_READY,
                             entry.live_status,
                             stamp,
                             stamp,

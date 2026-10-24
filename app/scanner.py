@@ -7,11 +7,13 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
+
 from app import layout
 from app.config import config
 from app.db import fetch_one, from_timestamp
 from app.jobs import JobRunner
-from app.library import ensure_video, record_archived, save_video_info, upsert_channel
+from app.library import ensure_video, record_archived, save_video_info
 from app.youtube import Cancelled
 
 BATCH = 500
@@ -44,6 +46,16 @@ def channel_from_folder(folder: str) -> tuple[str, str] | None:
     if folder.startswith("UC") and layout.CHANNEL_ID.fullmatch(folder):
         return folder, folder
     return None
+
+
+async def folder_channel(conn: aiosqlite.Connection, folder: str) -> int | None:
+    """The channel a folder belongs to, created from its name only if unknown."""
+    parsed = channel_from_folder(folder)
+    if parsed is None:
+        return None
+    await conn.execute("INSERT OR IGNORE INTO channels (youtube_id, name) VALUES (?, ?)", parsed)
+    row = await fetch_one(conn, "SELECT id FROM channels WHERE youtube_id = ?", (parsed[0],))
+    return row["id"]
 
 
 async def run_scan(
@@ -103,8 +115,7 @@ async def run_scan(
                 if info and info.get("id") == youtube_id:
                     video_id, _ = await save_video_info(conn, info)
                 else:
-                    channel = channel_from_folder(path.parent.name)
-                    channel_id = await upsert_channel(conn, *channel) if channel else None
+                    channel_id = await folder_channel(conn, path.parent.name)
                     video_id = await ensure_video(
                         conn, youtube_id, _title(path), channel_id=channel_id
                     )

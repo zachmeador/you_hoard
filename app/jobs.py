@@ -150,8 +150,7 @@ class JobRunner:
                     (now(), job_id),
                 )
         if job["status"] == "running":
-            if event := self._cancel.get(job_id):
-                event.set()
+            self._cancel.setdefault(job_id, threading.Event()).set()
         return True
 
     async def queue_due_checks(self) -> int:
@@ -235,8 +234,7 @@ class JobRunner:
         )
 
     async def _run(self, job: dict[str, Any]) -> None:
-        cancel = threading.Event()
-        self._cancel[job["id"]] = cancel
+        cancel = self._cancel.setdefault(job["id"], threading.Event())
         try:
             result = await self.handlers[job["kind"]](self, job, cancel)
         except Cancelled:

@@ -187,3 +187,14 @@ def test_scheduler_queues_due_checks_and_reschedules(archive):
     current = archive.client.get(f"/api/subscriptions/{sub['id']}").json()
     assert current["next_check_at"] > "2001"
     assert archive.call(archive.app.state.runner.queue_due_checks) == 0
+
+
+def test_streams_that_air_after_subscribing_count_as_new(archive):
+    stream = ids("liv", 1)[0]
+    archive.youtube.add(stream, live_status="is_upcoming")
+    archive.youtube.tabs["live"] = [stream]
+    sub = subscribe(archive, content_types=["live"])
+    assert library(archive) == {}
+    archive.youtube.videos[stream].live_status = "was_live"
+    check(archive, sub)
+    assert library(archive)[stream]["status"] == "archived"
