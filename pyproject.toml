@@ -1,31 +1,23 @@
 [project]
-name = "YouHoard"
-version = "0.0.1"
-description = "Self-hosted YouTube archiving application"
+name = "youhoard"
+version = "0.2.0"
+description = "Self-hosted YouTube archive"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "aiosqlite>=0.19.0",
-    "pydantic>=2.5.0",
-    "pydantic-settings>=2.1.0",
-    "passlib>=1.7.4",
-    "bcrypt>=3.2.0,<4.0.0",
-    "yt-dlp>=2023.12.30",
-    "python-multipart>=0.0.6",
-    "httpx>=0.25.0",
-    "apscheduler>=3.10.4",
-    "jinja2>=3.1.0",
+    "aiosqlite>=0.21.0",
+    "fastapi>=0.120.0",
+    "httpx>=0.28.0",
+    "pydantic>=2.11.0",
+    "pydantic-settings>=2.10.0",
+    "uvicorn[standard]>=0.38.0",
+    "yt-dlp[default,deno]>=2026.10.21",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "black>=23.12.0",
-    "ruff>=0.1.0",
-    "mypy>=1.7.0",
+    "pytest>=8.4.0",
+    "ruff>=0.14.0",
 ]
 
 [build-system]
@@ -40,26 +32,9 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
-ignore = ["E501"]
-
-[tool.black]
-line-length = 100
-
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-ignore_missing_imports = true
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
 markers = ["browser: browser integration tests (requires RUN_BROWSER_TESTS=1 and Playwright)"]
-
-[dependency-groups]
-dev = [
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.1.0",
-    "ruff>=0.12.5",
-]
