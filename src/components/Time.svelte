@@ -6,5 +6,5 @@
   let { value, absolute = false } = $props()
 </script>
 
-{#if value}<time datetime={value} title={dateTime(value)}>{absolute ? dateTime(value) : relative(value, clock.now)}</time
+{#if value}<time datetime={value} title={dateTime(value)}>{absolute ? dateTime(value) : relative(value, Math.max(clock.now, Date.now()))}</time
   >{:else}—{/if}

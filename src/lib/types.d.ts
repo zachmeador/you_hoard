@@ -45,7 +45,7 @@ export interface Video {
   deleted_at: string | null
   created_at: string
   youtube_url: string
-  thumbnail_url: string
+  thumbnail_url: string | null
   media_url: string
 }
 

@@ -72,7 +72,9 @@ def video_out(row: dict[str, Any]) -> dict[str, Any]:
         "deleted_at": row["deleted_at"],
         "created_at": row["created_at"],
         "youtube_url": video_url(row["youtube_id"]),
-        "thumbnail_url": f"/api/videos/{video_id}/thumbnail",
+        "thumbnail_url": f"/api/videos/{video_id}/thumbnail?v={row['archived_at']}"
+        if row["media_path"]
+        else None,
         "media_url": f"/api/videos/{video_id}/media",
     }
 
