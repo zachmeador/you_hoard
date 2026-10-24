@@ -37,6 +37,9 @@ packages = ["app"]
 
 [tool.ruff]
 line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = ["E501"]
 
@@ -52,9 +55,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["browser: browser integration tests (requires RUN_BROWSER_TESTS=1 and Playwright)"]
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.5",
 ]

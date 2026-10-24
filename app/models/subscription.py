@@ -1,141 +1,99 @@
-"""
-Subscription models and schemas
-"""
+"""Subscription inputs and stored responses."""
+
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import Any, Literal, Optional
 
-# Import video types from video model
-VideoType = Literal['video', 'short', 'live']
+from apscheduler.triggers.cron import CronTrigger
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-class SubscriptionBase(BaseModel):
-    """Base subscription schema"""
-    channel_id: int
-    subscription_type: str = Field(..., pattern="^(channel|playlist)$")
-    source_url: str
-    enabled: bool = True
-    auto_download: bool = True
-    quality_preference: str = "1080p"
-    download_comments: bool = False
-    subtitle_languages: Optional[List[str]] = None
-    audio_tracks: Optional[List[str]] = None
-    check_frequency: str = "0 * * * *"  # Cron expression
-    latest_n_videos: int = Field(default=20, ge=1, le=200)  # Max videos to check
-    content_types: List[VideoType] = Field(default=["video"], description="Video types to include in subscription")
-    
-    @field_validator('check_frequency')
-    @classmethod
-    def validate_cron(cls, v):
-        # Basic cron validation (could be more sophisticated)
-        parts = v.split()
-        if len(parts) != 5:
-            raise ValueError('Invalid cron expression')
-        return v
-    
-    @field_validator('content_types')
-    @classmethod
-    def validate_content_types(cls, v):
-        if not v:
-            raise ValueError('At least one content type must be specified')
-        valid_types = {'video', 'short', 'live'}
-        invalid_types = set(v) - valid_types
-        if invalid_types:
-            raise ValueError(f'Invalid content types: {invalid_types}')
-        return v
+from app.core.youtube import subscription_url
+from app.models.video import Quality, VideoType
+
+
+def valid_cron(value):
+    if value is not None:
+        CronTrigger.from_crontab(value)
+    return value
+
+
+def valid_types(value):
+    if value is not None and not value:
+        raise ValueError("Select at least one content type")
+    return value
 
 
 class SubscriptionCreate(BaseModel):
-    """Schema for creating a subscription"""
-    subscription_type: str = Field(..., pattern="^(channel|playlist)$")
+    subscription_type: Literal["channel", "playlist"]
     source_url: str
     enabled: bool = True
-    auto_download: bool = True
-    quality_preference: str = "1080p"
+    auto_download: bool = False
+    quality_preference: Quality = "1080p"
     download_comments: bool = False
-    subtitle_languages: Optional[List[str]] = None
-    audio_tracks: Optional[List[str]] = None
-    check_frequency: str = "0 * * * *"  # Cron expression
-    latest_n_videos: int = Field(default=20, ge=1, le=200)  # Max videos to check
-    content_types: List[VideoType] = Field(default=["video"], description="Video types to include in subscription")
-    extra_metadata: Optional[Dict[str, Any]] = None
-    
-    @field_validator('check_frequency')
-    @classmethod
-    def validate_cron(cls, v):
-        # Basic cron validation (could be more sophisticated)
-        parts = v.split()
-        if len(parts) != 5:
-            raise ValueError('Invalid cron expression')
-        return v
-    
-    @field_validator('content_types')
-    @classmethod
-    def validate_content_types(cls, v):
-        if not v:
-            raise ValueError('At least one content type must be specified')
-        valid_types = {'video', 'short', 'live'}
-        invalid_types = set(v) - valid_types
-        if invalid_types:
-            raise ValueError(f'Invalid content types: {invalid_types}')
-        return v
+    subtitle_languages: Optional[list[str]] = None
+    audio_tracks: Optional[list[str]] = None
+    check_frequency: str = "0 * * * *"
+    latest_n_videos: int = Field(20, ge=1, le=200)
+    content_types: list[VideoType] = Field(default_factory=lambda: ["video"])
+    extra_metadata: Optional[dict[str, Any]] = None
+
+    _cron = field_validator("check_frequency")(valid_cron)
+    _types = field_validator("content_types")(valid_types)
+
+    @model_validator(mode="after")
+    def canonical_source(self):
+        self.source_url = subscription_url(self.source_url, self.subscription_type)
+        return self
 
 
 class SubscriptionUpdate(BaseModel):
-    """Schema for updating a subscription"""
     enabled: Optional[bool] = None
     auto_download: Optional[bool] = None
-    quality_preference: Optional[str] = None
+    quality_preference: Optional[Quality] = None
     download_comments: Optional[bool] = None
-    subtitle_languages: Optional[List[str]] = None
-    audio_tracks: Optional[List[str]] = None
+    subtitle_languages: Optional[list[str]] = None
+    audio_tracks: Optional[list[str]] = None
     check_frequency: Optional[str] = None
-    latest_n_videos: Optional[int] = Field(default=None, ge=1, le=200)
-    content_types: Optional[List[VideoType]] = None
-    extra_metadata: Optional[Dict[str, Any]] = None
-    
-    @field_validator('content_types')
-    @classmethod
-    def validate_content_types(cls, v):
-        if v is not None:
-            if not v:
-                raise ValueError('At least one content type must be specified')
-            valid_types = {'video', 'short', 'live'}
-            invalid_types = set(v) - valid_types
-            if invalid_types:
-                raise ValueError(f'Invalid content types: {invalid_types}')
-        return v
+    latest_n_videos: Optional[int] = Field(None, ge=1, le=200)
+    content_types: Optional[list[VideoType]] = None
+    extra_metadata: Optional[dict[str, Any]] = None
+
+    _cron = field_validator("check_frequency")(valid_cron)
+    _types = field_validator("content_types")(valid_types)
+
+    @model_validator(mode="after")
+    def non_nullable_preferences(self):
+        for key in self.model_fields_set - {"subtitle_languages", "audio_tracks", "extra_metadata"}:
+            if getattr(self, key) is None:
+                raise ValueError(f"{key} cannot be null")
+        return self
 
 
-class SubscriptionInDB(SubscriptionBase):
-    """Subscription schema as stored in database"""
+class SubscriptionResponse(BaseModel):
     id: int
+    channel_id: int
+    subscription_type: str
+    source_url: str
+    enabled: bool
+    auto_download: bool
+    quality_preference: str
+    download_comments: bool
+    subtitle_languages: Optional[list[str]] = None
+    audio_tracks: Optional[list[str]] = None
+    check_frequency: str
+    latest_n_videos: int
+    content_types: list[VideoType]
+    extra_metadata: Optional[dict[str, Any]] = None
     last_check: Optional[datetime] = None
     new_videos_count: int = 0
-    extra_metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
-    
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SubscriptionResponse(SubscriptionInDB):
-    """Subscription response schema"""
     channel_name: str
     channel_youtube_id: str
     next_check: Optional[datetime] = None
+    last_job: Optional[dict] = None
 
 
 class SubscriptionListResponse(BaseModel):
-    """Response for subscription list endpoint"""
-    subscriptions: List[SubscriptionResponse]
+    subscriptions: list[SubscriptionResponse]
     total: int
-    page: int = 1
-    per_page: int = 50
-
-
-class SubscriptionCheckResult(BaseModel):
-    """Result of subscription check"""
-    subscription_id: int
-    channel_name: str
-    new_videos: List[Dict[str, Any]]
-    errors: List[str] = []
-    checked_at: datetime 
+    page: int
+    per_page: int

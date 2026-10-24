@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import Dialog from './Dialog.svelte'
   
   export let show = false
   export let video = null
@@ -8,18 +9,6 @@
   
   function handleClose() {
     show = false
-  }
-  
-  function handleBackdropClick(event) {
-    if (event.target === event.currentTarget) {
-      handleClose()
-    }
-  }
-  
-  function handleKeydown(event) {
-    if (event.key === 'Escape') {
-      handleClose()
-    }
   }
   
   function handleAction(action) {
@@ -31,7 +20,8 @@
       'completed': 'Video has been successfully downloaded',
       'downloading': 'Video is currently being downloaded',
       'pending': 'Video is waiting to be downloaded',
-      'failed': 'Download failed - try downloading again'
+      'failed': 'Download failed — see Downloads for the error and retry',
+      'deleted': 'Local files removed. Subscriptions will not download this video again.'
     }
     return descriptions[status] || 'Unknown status'
   }
@@ -47,18 +37,24 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
-
 {#if show && video}
-  <div class="modal show" on:click={handleBackdropClick}>
+  <Dialog bind:show label={video.title} width={900}>
     <div class="modal-content modal-large">
       <div class="modal-header">
         <h3>{video.title}</h3>
-        <button class="modal-close" on:click={handleClose}>&times;</button>
+        <button class="modal-close" aria-label="Close" on:click={handleClose}>&times;</button>
       </div>
       <div class="modal-body">
         <div class="video-detail-grid">
           <div class="video-detail-main">
+            {#if video.download_status === 'completed'}
+              <!-- svelte-ignore a11y-media-has-caption -->
+              <video controls preload="metadata" src="/api/videos/{video.id}/file"
+                poster={video.thumbnail_url || undefined} aria-label={video.title}>
+                Your browser cannot play this format. Open the local file instead.
+              </video>
+              <a href="/api/videos/{video.id}/file" target="_blank" rel="noreferrer">Open local file</a>
+            {/if}
             <div class="detail-section">
               <h4>Description</h4>
               <p>
@@ -121,7 +117,7 @@
             <div class="detail-section">
               <h4>Actions</h4>
               <div class="detail-actions">
-                {#if video.download_status === 'pending' || video.download_status === 'failed'}
+                {#if ['pending', 'failed', 'deleted'].includes(video.download_status)}
                   <button class="btn btn-primary btn-sm" on:click={() => handleAction('download')}>
                     Download
                   </button>
@@ -135,7 +131,7 @@
                   View on YouTube
                 </a>
                 <button class="btn btn-error btn-sm" on:click={() => handleAction('delete')}>
-                  Delete
+                  Remove local files
                 </button>
               </div>
             </div>
@@ -143,13 +139,12 @@
         </div>
       </div>
     </div>
-  </div>
+  </Dialog>
 {/if}
 
 <style>
-  .modal-large {
-    max-width: 800px;
-  }
+  .modal-large { max-width: 900px; }
+  video { width: 100%; max-height: 50vh; background: #000; }
 
   .video-detail-grid {
     display: grid;

@@ -12,6 +12,9 @@
   let selectedSubscription = null
   let schedulerStatus = null
   let ytdlpStatus = null
+  let mounted = false
+  let loadRequest = 0
+  let error = ''
   
   // Pagination state
   let currentPage = 1
@@ -25,45 +28,49 @@
     search: ''
   }
 
-  // Reactive statement to reload subscriptions when filters or pagination change
-  $: if (currentPage || filters) {
+  $: if (mounted && (currentPage || filters)) {
     loadSubscriptions()
   }
 
-  onMount(async () => {
-    await loadSubscriptions()
-    await loadSchedulerStatus()
-    await loadYTDLPStatus()
-    
-    // Poll status every 30 seconds
-    setInterval(() => {
+  onMount(() => {
+    mounted = true
+    loadSchedulerStatus()
+    loadYTDLPStatus()
+    const timer = setInterval(() => {
+      loadSubscriptions(true)
       loadSchedulerStatus()
       loadYTDLPStatus()
-    }, 30000)
+    }, 5000)
+    return () => {
+      mounted = false
+      clearInterval(timer)
+    }
   })
 
-  async function loadSubscriptions() {
-    loading = true
+  async function loadSubscriptions(quiet = false) {
+    const requestId = ++loadRequest
+    if (!quiet) loading = true
     
     try {
       const params = new URLSearchParams({
         page: currentPage,
         per_page: perPage,
-        enabled_only: filters.enabledOnly
+        enabled_only: filters.enabledOnly,
+        search: filters.search
       })
       
       const response = await window.youHoard.apiCall(`/api/subscriptions?${params}`)
       
+      if (!mounted || requestId !== loadRequest) return
       subscriptions = response.subscriptions || []
       totalSubscriptions = response.total || 0
-      totalPages = Math.ceil(totalSubscriptions / perPage)
+      totalPages = Math.max(1, Math.ceil(totalSubscriptions / perPage))
+      error = ''
       
-    } catch (error) {
-      console.error('Failed to load subscriptions:', error)
-      window.youHoard.showToast('Failed to load subscriptions', 'error')
-      subscriptions = []
+    } catch (err) {
+      if (mounted && requestId === loadRequest) error = err.message
     } finally {
-      loading = false
+      if (mounted && requestId === loadRequest) loading = false
     }
   }
 
@@ -85,7 +92,6 @@
 
   function handleFilterChange() {
     currentPage = 1
-    loadSubscriptions()
   }
 
   function handlePageChange(page) {
@@ -106,16 +112,11 @@
     
     try {
       if (action === 'check') {
-        window.youHoard.showToast('Checking subscription for new content...', 'warning')
         const result = await window.youHoard.apiCall(`/api/subscriptions/${subscriptionId}/check`, {
           method: 'POST'
         })
         
-        if (result.new_videos.length > 0) {
-          window.youHoard.showToast(`Found ${result.new_videos.length} new videos!`, 'success')
-        } else {
-          window.youHoard.showToast('No new videos found', 'warning')
-        }
+        window.youHoard.showToast(`Check #${result.job_id} queued. Follow its progress in Downloads.`, 'success')
         
         await loadSubscriptions()
       } else if (action === 'pause') {
@@ -131,7 +132,7 @@
         window.youHoard.showToast('Subscription resumed', 'success')
         await loadSubscriptions()
       } else if (action === 'delete') {
-        if (confirm('Are you sure you want to delete this subscription? This action cannot be undone.')) {
+        if (confirm('Stop following this source? Your saved videos will be kept.')) {
           await window.youHoard.apiCall(`/api/subscriptions/${subscriptionId}`, {
             method: 'DELETE'
           })
@@ -146,7 +147,7 @@
       }
     } catch (error) {
       console.error(`Failed to ${action} subscription:`, error)
-      window.youHoard.showToast(`Failed to ${action} subscription`, 'error')
+      window.youHoard.showToast(error.message, 'error')
     }
   }
 
@@ -276,6 +277,7 @@
         <input 
           type="text" 
           placeholder="Search subscriptions..."
+          aria-label="Search subscriptions"
           bind:value={filters.search}
           on:input={handleFilterChange}
           class="search-input"
@@ -285,6 +287,10 @@
   </div>
 </div>
 
+{#if error}
+  <p role="alert">Could not load subscriptions: {error} <button class="btn btn-secondary" on:click={() => loadSubscriptions()}>Retry</button></p>
+{/if}
+
 <!-- Subscriptions Grid -->
 <div class="subscriptions-grid">
   {#if loading}
@@ -292,7 +298,7 @@
       <div class="spinner"></div>
       Loading subscriptions...
     </div>
-  {:else if subscriptions.length === 0}
+  {:else if subscriptions.length === 0 && !error}
     <div class="empty-state" style="grid-column: 1 / -1;">
       <div class="empty-content">
         <h3>No subscriptions found</h3>

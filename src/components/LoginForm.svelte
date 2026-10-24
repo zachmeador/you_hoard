@@ -1,5 +1,5 @@
 <script>
-  import { authApi } from '../stores/auth.js'
+  import { authApi, authStore } from '../stores/auth.js'
   
   let username = ''
   let password = ''
@@ -12,7 +12,9 @@
     submitting = true
     error = ''
     
-    const result = await authApi.login(username.trim(), password)
+    const result = $authStore.setupRequired
+      ? await authApi.setup(username.trim(), password)
+      : await authApi.login(username.trim(), password)
     
     if (!result.success) {
       error = result.error
@@ -27,9 +29,13 @@
   <div class="login-card">
     <div class="login-header">
       <h1>YouHoard</h1>
-      <p>Please log in to continue</p>
+      <p>{$authStore.setupRequired ? 'Create your archive login. There are no default credentials.' : 'Log in to your archive'}</p>
     </div>
     
+    {#if $authStore.error}
+      <p class="error-message" role="alert">{$authStore.error}</p>
+      <button class="btn btn-secondary" on:click={() => authApi.init()}>Retry connection</button>
+    {/if}
     <form on:submit|preventDefault={handleSubmit}>
       {#if error}
         <div class="error-message">
@@ -59,15 +65,16 @@
           placeholder="Enter password" 
           required
           disabled={submitting}
-          autocomplete="current-password"
+          autocomplete={$authStore.setupRequired ? 'new-password' : 'current-password'}
+          minlength={$authStore.setupRequired ? 8 : undefined}
         >
       </div>
       
       <button type="submit" class="btn btn-primary btn-lg" disabled={submitting} style="width: 100%;">
         {#if submitting}
-          <span class="spinner"></span>Logging in...
+          <span class="spinner"></span>Please wait...
         {:else}
-          Login
+          {$authStore.setupRequired ? 'Create login & open archive' : 'Log in'}
         {/if}
       </button>
     </form>

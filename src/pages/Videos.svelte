@@ -10,6 +10,9 @@
   let loading = true
   let selectedVideo = null
   let showVideoDetail = false
+  let mounted = false
+  let loadRequest = 0
+  let error = ''
   
   // Pagination state
   let currentPage = 1
@@ -24,14 +27,20 @@
     channelId: ''
   }
 
-  // Reactive statement to reload videos when filters or pagination change
-  $: if (currentPage || filters) {
+  $: if (mounted && (currentPage || filters)) {
     loadVideos()
   }
 
-  onMount(async () => {
-    await loadChannels()
-    await loadVideos()
+  onMount(() => {
+    mounted = true
+    loadChannels()
+    const timer = setInterval(() => {
+      if (videos.some(video => ['pending', 'downloading'].includes(video.download_status))) loadVideos(true)
+    }, 3000)
+    return () => {
+      mounted = false
+      clearInterval(timer)
+    }
   })
 
   async function loadChannels() {
@@ -43,8 +52,9 @@
     }
   }
 
-  async function loadVideos() {
-    loading = true
+  async function loadVideos(quiet = false) {
+    const requestId = ++loadRequest
+    if (!quiet) loading = true
     
     try {
       const params = new URLSearchParams({
@@ -59,16 +69,17 @@
       
       const response = await window.youHoard.apiCall(`/api/videos?${params}`)
       
+      if (!mounted || requestId !== loadRequest) return
       videos = response.videos || []
       totalVideos = response.total || 0
-      totalPages = Math.ceil(totalVideos / perPage)
+      totalPages = Math.max(1, Math.ceil(totalVideos / perPage))
+      error = ''
+      if (selectedVideo) selectedVideo = videos.find(video => video.id === selectedVideo.id) || selectedVideo
       
-    } catch (error) {
-      console.error('Failed to load videos:', error)
-      window.youHoard.showToast('Failed to load videos', 'error')
-      videos = []
+    } catch (err) {
+      if (mounted && requestId === loadRequest) error = err.message
     } finally {
-      loading = false
+      if (mounted && requestId === loadRequest) loading = false
     }
   }
 
@@ -120,16 +131,16 @@
         window.youHoard.showToast('Video queued for download', 'success')
         await loadVideos() // Refresh the list
       } catch (error) {
-        window.youHoard.showToast('Failed to queue download', 'error')
+        window.youHoard.showToast(error.message, 'error')
       }
     } else if (action === 'delete') {
-      if (confirm('Are you sure you want to delete this video? This action cannot be undone.')) {
+      if (confirm('Remove this video’s local files? Its record is kept so subscriptions will not download it again.')) {
         try {
           await window.youHoard.apiCall(`/api/videos/${videoId}`, { method: 'DELETE' })
-          window.youHoard.showToast('Video deleted successfully', 'success')
+          window.youHoard.showToast('Local files removed; video remains remembered', 'success')
           await loadVideos() // Refresh the list
         } catch (error) {
-          window.youHoard.showToast('Failed to delete video', 'error')
+          window.youHoard.showToast(error.message, 'error')
         }
       }
     }
@@ -137,6 +148,8 @@
     showVideoDetail = false
   }
 </script>
+
+<svelte:window on:library-changed={() => { loadChannels(); loadVideos(true) }} />
 
 <div class="page-header">
   <h1 class="page-title">Videos</h1>
@@ -151,13 +164,17 @@
   on:clearFilters={handleClearFilters}
 />
 
+{#if error}
+  <p role="alert">Could not load videos: {error} <button class="btn btn-secondary" on:click={() => loadVideos()}>Retry</button></p>
+{/if}
+
 <!-- Videos Grid -->
 <div class="videos-grid">
   {#if loading}
     <div class="loading-placeholder" style="grid-column: 1 / -1;">
       Loading videos...
     </div>
-  {:else if videos.length === 0}
+  {:else if videos.length === 0 && !error}
     <div class="loading-placeholder" style="grid-column: 1 / -1;">
       No videos found. Try adjusting your filters or 
       <button class="btn-link" on:click={() => window.youHoard.showModal('add-video-modal')}>

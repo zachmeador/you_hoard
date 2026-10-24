@@ -1,13 +1,16 @@
 """
 Channel models and schemas
 """
+
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict
 
 
 class ChannelBase(BaseModel):
     """Base channel schema"""
+
     youtube_id: str
     name: str
     description: Optional[str] = None
@@ -17,11 +20,13 @@ class ChannelBase(BaseModel):
 
 class ChannelCreate(ChannelBase):
     """Schema for creating a channel"""
+
     extra_metadata: Optional[Dict[str, Any]] = None
 
 
 class ChannelUpdate(BaseModel):
     """Schema for updating a channel"""
+
     name: Optional[str] = None
     description: Optional[str] = None
     subscriber_count: Optional[int] = None
@@ -31,16 +36,18 @@ class ChannelUpdate(BaseModel):
 
 class ChannelInDB(ChannelBase):
     """Channel schema as stored in database"""
+
     id: int
     extra_metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class ChannelResponse(ChannelInDB):
     """Channel response schema"""
+
     video_count: int = 0
     tags: List[Dict[str, Any]] = []
     subscription_status: Optional[str] = None
@@ -48,6 +55,7 @@ class ChannelResponse(ChannelInDB):
 
 class ChannelListResponse(BaseModel):
     """Response for channel list endpoint"""
+
     channels: List[ChannelResponse]
     total: int
     page: int = 1
@@ -56,7 +64,8 @@ class ChannelListResponse(BaseModel):
 
 class ChannelWithStats(ChannelInDB):
     """Channel with statistics"""
+
     total_videos: int = 0
     downloaded_videos: int = 0
     total_size: int = 0  # bytes
-    last_video_date: Optional[datetime] = None 
+    last_video_date: Optional[datetime] = None

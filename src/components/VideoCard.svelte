@@ -13,7 +13,7 @@
 <div class="video-card" on:click={handleClick} on:keydown={e => e.key === 'Enter' && handleClick()} tabindex="0" role="button">
   <div class="video-thumbnail">
     {#if video.thumbnail_url}
-      <img src={video.thumbnail_url} alt={video.title} loading="lazy" onerror="this.style.display='none'">
+      <img src={video.thumbnail_url} alt={video.title} loading="lazy" on:error={event => { event.currentTarget.style.display = 'none' }}>
     {:else}
       🎬
     {/if}
@@ -112,6 +112,7 @@
     margin-bottom: var(--space-2);
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }

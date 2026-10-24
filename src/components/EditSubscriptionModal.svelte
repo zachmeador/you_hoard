@@ -1,5 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import Dialog from './Dialog.svelte'
+  import { qualityOptions } from '../lib/quality.js'
   
   export let show = false
   export let subscription = null
@@ -9,17 +11,6 @@
   let form = {}
   let loading = false
   let error = null
-  
-  const qualityOptions = [
-    { value: '240p', label: '240p (Low)' },
-    { value: '360p', label: '360p' },
-    { value: '480p', label: '480p' },
-    { value: '720p', label: '720p (HD)' },
-    { value: '1080p', label: '1080p (Full HD)' },
-    { value: '1440p', label: '1440p (2K)' },
-    { value: '2160p', label: '2160p (4K)' },
-    { value: 'best', label: 'Best Available' }
-  ]
   
   const scheduleOptions = [
     { value: '*/30 * * * *', label: 'Every 30 minutes' },
@@ -34,7 +25,7 @@
   const contentTypeOptions = [
     { value: 'video', label: 'Regular Videos' },
     { value: 'short', label: 'YouTube Shorts' },
-    { value: 'live', label: 'Live Streams' }
+    { value: 'live', label: 'Livestream replays' }
   ]
   
   const commonLanguages = [
@@ -50,8 +41,8 @@
   function populateForm() {
     form = {
       enabled: subscription.enabled ?? true,
-      auto_download: subscription.auto_download ?? true,
-      quality_preference: subscription.quality_preference || '720p',
+      auto_download: subscription.auto_download ?? false,
+      quality_preference: subscription.quality_preference || '1080p',
       download_comments: subscription.download_comments ?? false,
       subtitle_languages: subscription.subtitle_languages || [],
       check_frequency: subscription.check_frequency || '0 * * * *',
@@ -105,17 +96,18 @@
   }
   
   function handleCancel() {
+    if (loading) return
     show = false
     error = null
   }
 </script>
 
 {#if show && subscription}
-  <div class="modal show">
+  <Dialog bind:show label="Edit subscription" width={600} busy={loading}>
     <div class="modal-content large-modal">
       <div class="modal-header">
         <h3>Edit Subscription</h3>
-        <button class="modal-close" on:click={handleCancel}>&times;</button>
+        <button class="modal-close" aria-label="Close" on:click={handleCancel} disabled={loading}>&times;</button>
       </div>
       
       <div class="modal-body">
@@ -161,7 +153,7 @@
                    {/each}
                  </div>
                  <div class="field-help">
-                   Select which types of content to include in this subscription
+                   Choose independently for this subscription. Upcoming and currently live streams are skipped.
                  </div>
                </fieldset>
              </div>
@@ -176,7 +168,7 @@
                 max="200"
               />
               <div class="field-help">
-                Maximum number of latest videos to check (1-200)
+                Check the latest 1–200 entries per selected channel tab, or from the playlist.
               </div>
             </div>
           </div>
@@ -274,7 +266,7 @@
         </button>
       </div>
     </div>
-  </div>
+  </Dialog>
 {/if}
 
 <style>

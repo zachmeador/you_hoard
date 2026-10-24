@@ -1,173 +1,140 @@
-"""
-Download queue management endpoints
-"""
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from typing import Optional, List, Dict, Any
+"""Inspect and control durable jobs without pretending to stop active transfers."""
+
 from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from app.api.dependencies import get_db, get_downloader
 from app.core.database import Database
-from app.core.downloader import Downloader, DownloadProgress
-from app.core.security import SessionBearer, SecurityManager
-
+from app.core.downloader import Downloader
+from app.core.security import get_auth
 
 router = APIRouter()
 
 
 class DownloadQueueItem(BaseModel):
-    """Download queue item response"""
     id: int
-    video_id: int
-    video_title: str
-    channel_name: str
+    job_type: str
+    video_id: Optional[int] = None
+    subscription_id: Optional[int] = None
+    video_title: Optional[str] = None
+    channel_name: Optional[str] = None
+    quality: Optional[str] = None
     priority: int
     status: str
     progress: float
     speed: Optional[float] = None
     eta: Optional[int] = None
     error_message: Optional[str] = None
+    videos_found: int = 0
+    videos_processed: int = 0
+    result_data: Optional[dict] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     created_at: datetime
 
 
 class DownloadQueueResponse(BaseModel):
-    """Response for download queue list"""
-    downloads: List[DownloadQueueItem]
+    downloads: list[DownloadQueueItem]
     total: int
     active_count: int
     queued_count: int
     failed_count: int
 
 
-def get_db(request: Request) -> Database:
-    """Get database from app state"""
-    return request.app.state.db
-
-
-def get_downloader(request: Request) -> Downloader:
-    """Get downloader from app state"""
-    if not hasattr(request.app.state, 'downloader'):
-        request.app.state.downloader = Downloader(request.app.state.db)
-    return request.app.state.downloader
-
-
-def get_auth(request: Request) -> SessionBearer:
-    """Get auth dependency"""
-    security_manager = SecurityManager(request.app.state.db)
-    return SessionBearer(security_manager)
-
-
 @router.get("", response_model=DownloadQueueResponse)
 async def list_downloads(
     status: Optional[str] = None,
     limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: Database = Depends(get_db),
     downloader: Downloader = Depends(get_downloader),
-    _: dict = Depends(get_auth)
+    _: dict = Depends(get_auth),
 ):
-    """
-    List download queue with filtering
-    """
-    # Build query
-    where_clause = "1=1"
-    params = []
-    
-    if status:
-        where_clause += " AND dq.status = ?"
-        params.append(status)
-    
-    # Get downloads
-    query = f"""
-        SELECT dq.*, v.title as video_title, c.name as channel_name
+    params = [status] if status else []
+    where = "WHERE dq.status = ?" if status else ""
+    jobs = await db.execute(
+        f"""
+        SELECT dq.*, v.title AS video_title, COALESCE(c.name, sc.name) AS channel_name
         FROM job_queue dq
-        JOIN videos v ON dq.video_id = v.id
-        JOIN channels c ON v.channel_id = c.id
-        WHERE {where_clause}
-        ORDER BY 
-            CASE dq.status 
-                WHEN 'downloading' THEN 1 
-                WHEN 'queued' THEN 2 
-                WHEN 'paused' THEN 3
-                WHEN 'failed' THEN 4
-                ELSE 5 
-            END,
-            dq.priority DESC,
-            dq.created_at ASC
-        LIMIT ?
-    """
-    params.append(limit)
-    downloads = await db.execute(query, tuple(params))
-    
-    # Get active downloads info
-    active_downloads = downloader.get_active_downloads()
-    
-    # Merge active download progress
-    for download in downloads:
-        if download['status'] == 'downloading' and download['video_id'] in active_downloads:
-            active = active_downloads[download['video_id']]
-            download['progress'] = active.progress
-            download['speed'] = active.speed
-            download['eta'] = active.eta
-    
-    # Get counts
-    count_query = """
-        SELECT 
-            COUNT(*) as total,
-            COUNT(CASE WHEN status = 'downloading' THEN 1 END) as active_count,
-            COUNT(CASE WHEN status = 'queued' THEN 1 END) as queued_count,
-            COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count
-        FROM job_queue
-    """
-    counts = await db.execute_one(count_query)
-    
-    return DownloadQueueResponse(
-        downloads=[DownloadQueueItem(**d) for d in downloads],
-        total=counts['total'],
-        active_count=counts['active_count'],
-        queued_count=counts['queued_count'],
-        failed_count=counts['failed_count']
+        LEFT JOIN videos v ON v.id = dq.video_id
+        LEFT JOIN channels c ON c.id = v.channel_id
+        LEFT JOIN subscriptions s ON s.id = dq.subscription_id
+        LEFT JOIN channels sc ON sc.id = s.channel_id
+        {where}
+        ORDER BY CASE dq.status WHEN 'downloading' THEN 0 WHEN 'processing' THEN 0
+                 WHEN 'queued' THEN 1 WHEN 'failed' THEN 2 WHEN 'paused' THEN 3 ELSE 4 END,
+                 dq.priority DESC, dq.id DESC LIMIT ? OFFSET ?""",
+        tuple(params + [limit, offset]),
     )
+    active = downloader.get_active_downloads()
+    for job in jobs:
+        if job["status"] == "downloading" and job["video_id"] in active:
+            progress = active[job["video_id"]]
+            job.update(progress=progress.progress, speed=progress.speed, eta=progress.eta)
+        job["result_data"] = Database.json_decode(job.get("result_data"))
+    counts = await db.execute_one("""SELECT COUNT(*) AS total,
+        COUNT(CASE WHEN status IN ('downloading', 'processing') THEN 1 END) AS active_count,
+        COUNT(CASE WHEN status = 'queued' THEN 1 END) AS queued_count,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_count FROM job_queue""")
+    return DownloadQueueResponse(downloads=[DownloadQueueItem(**j) for j in jobs], **counts)
+
+
+async def transition(
+    download_id: int, expected: str, state: str, db: Database, downloader: Downloader
+):
+    async with db.get_db() as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        cursor = await conn.execute("SELECT * FROM job_queue WHERE id = ?", (download_id,))
+        job = await cursor.fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job["status"] != expected:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot change a {job['status']} job. Active work must finish first.",
+            )
+        if state == "queued":
+            key = "video_id" if job["job_type"] == "download" else "subscription_id"
+            if job[key] is not None:
+                cursor = await conn.execute(
+                    f"SELECT id FROM job_queue WHERE {key} = ? AND job_type = ? AND id != ? "
+                    "AND status IN ('queued', 'downloading', 'processing', 'paused')",
+                    (job[key], job["job_type"], download_id),
+                )
+                if await cursor.fetchone():
+                    raise HTTPException(
+                        status_code=409, detail="There is already a job for this source"
+                    )
+            if job["video_id"]:
+                cursor = await conn.execute(
+                    "SELECT download_status FROM videos WHERE id = ?", (job["video_id"],)
+                )
+                video = await cursor.fetchone()
+                if video["download_status"] == "completed":
+                    raise HTTPException(status_code=409, detail="Video is already downloaded")
+                await conn.execute(
+                    "UPDATE videos SET download_status = 'pending' WHERE id = ?", (job["video_id"],)
+                )
+        await conn.execute(
+            "UPDATE job_queue SET status = ?, progress = 0, error_message = NULL, started_at = NULL, completed_at = NULL WHERE id = ?",
+            (state, download_id),
+        )
+        await conn.commit()
+    downloader.notify_queue_changed()
+    return {"message": f"Job {state}"}
 
 
 @router.post("/{download_id}/pause")
 async def pause_download(
     download_id: int,
     db: Database = Depends(get_db),
-    _: dict = Depends(get_auth)
+    downloader: Downloader = Depends(get_downloader),
+    _: dict = Depends(get_auth),
 ):
-    """
-    Pause a download
-    """
-    # Check if download exists
-    download = await db.execute_one(
-        "SELECT * FROM job_queue WHERE id = ?",
-        (download_id,)
-    )
-    
-    if not download:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Download not found"
-        )
-    
-    if download['status'] not in ['queued', 'downloading']:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot pause download with status: {download['status']}"
-        )
-    
-    # Update status
-    await db.update(
-        "job_queue",
-        {"status": "paused"},
-        "id = ?",
-        (download_id,)
-    )
-    
-    # TODO: Actually pause the download if it's active
-    
-    return {"message": "Download paused"}
+    return await transition(download_id, "queued", "paused", db, downloader)
 
 
 @router.post("/{download_id}/resume")
@@ -175,42 +142,9 @@ async def resume_download(
     download_id: int,
     db: Database = Depends(get_db),
     downloader: Downloader = Depends(get_downloader),
-    _: dict = Depends(get_auth)
+    _: dict = Depends(get_auth),
 ):
-    """
-    Resume a paused download
-    """
-    # Check if download exists
-    download = await db.execute_one(
-        "SELECT * FROM job_queue WHERE id = ?",
-        (download_id,)
-    )
-    
-    if not download:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Download not found"
-        )
-    
-    if download['status'] != 'paused':
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot resume download with status: {download['status']}"
-        )
-    
-    # Update status and re-queue
-    await db.update(
-        "job_queue",
-        {"status": "queued"},
-        "id = ?",
-        (download_id,)
-    )
-    
-    # Re-process download
-    import asyncio
-    asyncio.create_task(downloader._process_download(download['video_id']))
-    
-    return {"message": "Download resumed"}
+    return await transition(download_id, "paused", "queued", db, downloader)
 
 
 @router.post("/{download_id}/retry")
@@ -218,154 +152,49 @@ async def retry_download(
     download_id: int,
     db: Database = Depends(get_db),
     downloader: Downloader = Depends(get_downloader),
-    _: dict = Depends(get_auth)
+    _: dict = Depends(get_auth),
 ):
-    """
-    Retry a failed download
-    """
-    # Check if download exists
-    download = await db.execute_one(
-        "SELECT * FROM job_queue WHERE id = ?",
-        (download_id,)
-    )
-    
-    if not download:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Download not found"
-        )
-    
-    if download['status'] != 'failed':
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot retry download with status: {download['status']}"
-        )
-    
-    # Reset download
-    await db.update(
-        "job_queue",
-        {
-            "status": "queued",
-            "progress": 0.0,
-            "error_message": None,
-            "started_at": None,
-            "completed_at": None
-        },
-        "id = ?",
-        (download_id,)
-    )
-    
-    # Reset video status
-    await db.update(
-        "videos",
-        {"download_status": "pending"},
-        "id = ?",
-        (download['video_id'],)
-    )
-    
-    # Re-process download
-    import asyncio
-    asyncio.create_task(downloader._process_download(download['video_id']))
-    
-    return {"message": "Download retry queued"}
+    return await transition(download_id, "failed", "queued", db, downloader)
 
 
 @router.delete("/{download_id}")
 async def cancel_download(
-    download_id: int,
-    db: Database = Depends(get_db),
-    downloader: Downloader = Depends(get_downloader),
-    _: dict = Depends(get_auth)
+    download_id: int, db: Database = Depends(get_db), _: dict = Depends(get_auth)
 ):
-    """
-    Cancel and remove a download from queue
-    """
-    # Check if download exists
-    download = await db.execute_one(
-        "SELECT * FROM job_queue WHERE id = ?",
-        (download_id,)
-    )
-    
-    if not download:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Download not found"
-        )
-    
-    # Attempt to cancel if active
-    await downloader.cancel_download(download['video_id'])
-    
-    # Delete from queue
-    await db.delete("job_queue", "id = ?", (download_id,))
-    
-    # Update video status if not completed
-    if download['status'] != 'completed':
-        await db.update(
-            "videos",
-            {"download_status": "pending"},
-            "id = ?",
-            (download['video_id'],)
-        )
-    
-    return {"message": "Download cancelled"}
+    async with db.get_db() as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        cursor = await conn.execute("SELECT * FROM job_queue WHERE id = ?", (download_id,))
+        job = await cursor.fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job["status"] in ("downloading", "processing"):
+            raise HTTPException(
+                status_code=409, detail="Active work must finish before it can be removed"
+            )
+        await conn.execute("DELETE FROM job_queue WHERE id = ?", (download_id,))
+        await conn.commit()
+    return {"message": "Job removed; library files are unchanged"}
 
 
 @router.post("/clear-completed")
-async def clear_completed_downloads(
-    db: Database = Depends(get_db),
-    _: dict = Depends(get_auth)
-):
-    """
-    Remove all completed downloads from queue
-    """
-    deleted = await db.delete(
-        "job_queue",
-        "status = ?",
-        ("completed",)
-    )
-    
-    return {"message": f"Cleared {deleted} completed downloads"}
+async def clear_completed_downloads(db: Database = Depends(get_db), _: dict = Depends(get_auth)):
+    deleted = await db.delete("job_queue", "status = ?", ("completed",))
+    return {"message": f"Cleared {deleted} completed jobs"}
 
 
 @router.post("/retry-all-failed")
 async def retry_all_failed(
     db: Database = Depends(get_db),
     downloader: Downloader = Depends(get_downloader),
-    _: dict = Depends(get_auth)
+    _: dict = Depends(get_auth),
 ):
-    """
-    Retry all failed downloads
-    """
-    # Get failed downloads
-    failed_downloads = await db.execute(
-        "SELECT * FROM job_queue WHERE status = ?",
-        ("failed",)
-    )
-    
-    # Reset each failed download
-    for download in failed_downloads:
-        await db.update(
-            "job_queue",
-            {
-                "status": "queued",
-                "progress": 0.0,
-                "error_message": None,
-                "started_at": None,
-                "completed_at": None
-            },
-            "id = ?",
-            (download['id'],)
-        )
-        
-        await db.update(
-            "videos",
-            {"download_status": "pending"},
-            "id = ?",
-            (download['video_id'],)
-        )
-        
-        # Re-process download
-        import asyncio
-        asyncio.create_task(downloader._process_download(download['video_id']))
-    
-    return {"message": f"Retrying {len(failed_downloads)} failed downloads"} 
+    jobs = await db.execute("SELECT id FROM job_queue WHERE status = 'failed'")
+    retried = 0
+    for job in jobs:
+        try:
+            await transition(job["id"], "failed", "queued", db, downloader)
+            retried += 1
+        except HTTPException as error:
+            if error.status_code != 409:
+                raise
+    return {"message": f"Retrying {retried} failed jobs", "retried": retried}

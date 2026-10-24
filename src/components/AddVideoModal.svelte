@@ -1,4 +1,6 @@
 <script>
+  import Dialog from './Dialog.svelte'
+  import { qualityOptions } from '../lib/quality.js'
   export let show = false
   
   let url = ''
@@ -21,45 +23,30 @@
       url = ''
       quality = '1080p'
       
-      // Refresh current page if it's videos
-      if (window.location.hash === '#/videos') {
-        window.location.reload()
-      }
+      window.dispatchEvent(new Event('library-changed'))
 
     } catch (error) {
-      window.youHoard.showToast('Failed to add video', 'error')
+      window.youHoard.showToast(error.message, 'error')
     } finally {
       submitting = false
     }
   }
 
   function handleCancel() {
+    if (submitting) return
     show = false
     url = ''
     quality = '1080p'
   }
 
-  function handleKeydown(event) {
-    if (event.key === 'Escape') {
-      handleCancel()
-    }
-  }
-
-  function handleBackdropClick(event) {
-    if (event.target === event.currentTarget) {
-      handleCancel()
-    }
-  }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
-
 {#if show}
-  <div class="modal show" on:click={handleBackdropClick}>
+  <Dialog bind:show label="Add video" busy={submitting}>
     <div class="modal-content">
       <div class="modal-header">
         <h3>Add Video</h3>
-        <button class="modal-close" on:click={handleCancel}>&times;</button>
+        <button class="modal-close" aria-label="Close" on:click={handleCancel} disabled={submitting}>&times;</button>
       </div>
       <div class="modal-body">
         <form on:submit|preventDefault={handleSubmit}>
@@ -77,10 +64,9 @@
           <div class="form-group">
             <label for="video-quality">Quality</label>
             <select id="video-quality" bind:value={quality} disabled={submitting}>
-              <option value="1080p">1080p</option>
-              <option value="720p">720p</option>
-              <option value="480p">480p</option>
-              <option value="best">Best Available</option>
+              {#each qualityOptions as option}
+                <option value={option.value}>{option.label}</option>
+              {/each}
             </select>
           </div>
           <div class="form-actions">
@@ -98,5 +84,5 @@
         </form>
       </div>
     </div>
-  </div>
+  </Dialog>
 {/if} 

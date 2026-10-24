@@ -1,37 +1,53 @@
 # YouHoard
 
-A youtube archiver app that cares about simplicity and feature richness.
+A single-user YouTube archive built with FastAPI, SQLite, Svelte and yt-dlp. Follow channels/playlists, choose whether to keep regular videos, Shorts or livestream replays, or paste an individual video URL.
 
-`youhoard` uses sqlite, fastapi, and yt-dlp. No need to spin up redis, elasticsearch, kubernetes, or terraform a new data center just to have a webapp that makes yt archiving easier. 
+No Redis or Elasticsearch. Media and metadata are stored as ordinary files.
 
-<img src="docs/video_page.png" alt="YouHoard Interface" width="600">
+**In development.** The recovery branch repairs core workflows; it is not yet a verified TubeArchivist replacement. See the [roadmap](ROADMAP.md) and [known gaps](docs/revival.md).
 
-## Current status
+## Run locally
 
-Version: 0.0.1
+Requires Python 3.11+, Node.js 20+, [uv](https://docs.astral.sh/uv/), and ffmpeg on `PATH`.
 
-Very alpha, not worth trying unless you want to submit PRs.
-
-Missing many features that I want, will be added over time. 
-
-## Running It
-
-For development:
-
-```bash
-# Install dependencies
-uv sync
-npm install
-
-# Run both frontend and backend with combined logs
+```sh
+uv sync --frozen
+npm ci
 npm run dev
 ```
 
-This runs the backend (FastAPI on port 8000) and frontend (Vite on port 5173) together with color-coded logs. 
+Open `http://localhost:5173` and create your login on first run. There are no default credentials. The backend runs on port 8000. Optional environment settings are shown in [.env.example](.env.example).
 
-## Is it vibe coded?
+For a built frontend:
 
-Yes.
+```sh
+npm run build
+uv run uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Open `http://localhost:8000`. Run one application process, not multiple Uvicorn workers. Keep it on a trusted LAN/tailnet; public deployment is not supported.
+
+## Checks
+
+```sh
+uv run pytest
+uv run ruff check app main.py tests
+uv run ruff format --check app main.py tests
+npm run check
+npm run build
+```
+
+Integration tests use temporary databases/media storage and a YouTube test double. They do not verify current YouTube compatibility.
+
+For the optional browser test, build the frontend, install Chromium with `uv run --with playwright python -m playwright install chromium`, then run:
+
+```sh
+RUN_BROWSER_TESTS=1 uv run --with playwright python -m pytest -m browser
+```
+
+Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chrome/Chromium binary. The test covers setup, subscription filters, downloads, local playback and mobile navigation.
+
+See [subscription behavior](docs/subscriptions.md), [architecture](DESIGN.md), and the API at `/docs`.
 
 ## License
 

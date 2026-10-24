@@ -1,16 +1,19 @@
 """
 Scheduler event models and schemas
 """
-from datetime import datetime
-from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict
 
-EventType = Literal['check_started', 'check_completed', 'check_failed', 'check_cancelled']
-EventStatus = Literal['success', 'partial_success', 'failed']
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict
+
+EventType = Literal["check_started", "check_completed", "check_failed", "check_cancelled"]
+EventStatus = Literal["success", "partial_success", "failed"]
 
 
 class SchedulerEventBase(BaseModel):
     """Base scheduler event schema"""
+
     subscription_id: int
     event_type: EventType
     status: EventStatus = "success"
@@ -27,12 +30,14 @@ class SchedulerEventBase(BaseModel):
 
 class SchedulerEventCreate(SchedulerEventBase):
     """Schema for creating a scheduler event"""
+
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
 
 class SchedulerEventUpdate(BaseModel):
     """Schema for updating a scheduler event"""
+
     status: Optional[EventStatus] = None
     videos_found: Optional[int] = None
     videos_added: Optional[int] = None
@@ -48,21 +53,24 @@ class SchedulerEventUpdate(BaseModel):
 
 class SchedulerEventInDB(SchedulerEventBase):
     """Scheduler event schema as stored in database"""
+
     id: int
     started_at: datetime
     completed_at: Optional[datetime] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class SchedulerEventResponse(SchedulerEventInDB):
     """Scheduler event response schema"""
+
     channel_name: Optional[str] = None
     subscription_source_url: Optional[str] = None
 
 
 class SchedulerEventListResponse(BaseModel):
     """Response for scheduler events list endpoint"""
+
     events: List[SchedulerEventResponse]
     total: int
     page: int = 1
@@ -71,6 +79,7 @@ class SchedulerEventListResponse(BaseModel):
 
 class SubscriptionCheckSummary(BaseModel):
     """Summary of recent checks for a subscription"""
+
     subscription_id: int
     total_checks: int
     successful_checks: int
@@ -80,4 +89,4 @@ class SubscriptionCheckSummary(BaseModel):
     total_videos_added: int
     total_videos_queued: int
     average_duration_ms: Optional[float] = None
-    recent_errors: List[str] = [] 
+    recent_errors: List[str] = []

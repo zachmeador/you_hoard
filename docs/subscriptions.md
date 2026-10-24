@@ -1,49 +1,38 @@
-## Current Subscription System Flow
+# Subscriptions
 
-Here's how the subscription functionality works now, end-to-end:
+A subscription follows a YouTube channel or playlist. The same video can be discovered through several sources, but its YouTube ID identifies one library record and one local copy.
 
-### 1. **Subscription Creation**
-- User provides YouTube channel/playlist URL
-- System extracts channel metadata using `yt-dlp`
-- Creates/finds channel record in database
-- Creates subscription with user preferences:
-  - Quality preference (now defaults to 720p as you just changed)
-  - Auto-download enabled/disabled
-  - Check frequency (cron expression, default hourly)
-  - Additional settings (comments, subtitles, etc.)
-- If enabled, adds to APScheduler for automatic checking
+## Add a source
 
-### 2. **Automatic Monitoring** 
-- APScheduler runs subscription checks based on each subscription's cron schedule
-- For each check:
-  - Fetches latest ~20 videos from the channel/playlist via `yt-dlp` 
-  - Compares against existing videos in database (by YouTube ID)
-  - **New videos found** → adds to `videos` table with metadata
-  - **If `auto_download=true`** → automatically queues for download with:
-    - Priority = 1 (higher than manual additions)
-    - Quality = subscription's preference (720p default)
-  - Updates subscription record with `last_check` time and `new_videos_count`
+1. Paste a channel or playlist URL. The form detects its type; it can also be selected explicitly.
+2. Select regular videos, Shorts, livestream replays, or any combination. These choices belong to this subscription, not the entire library.
+3. Choose the recent-entry limit, quality cap, comments, subtitle languages and schedule.
+4. Choose whether to download automatically. It is off by default; discovery alone creates pending library entries that can be downloaded manually.
+5. Save. An enabled subscription queues an initial check and schedules future checks. A disabled subscription is saved without checking.
 
-### 3. **User Interface Integration**
-- Lists subscriptions with real next check times (using APScheduler's cron parsing)
-- Shows count of new videos found in last check
-- Manual check button for immediate checking
-- Pause/resume controls
-- Individual subscription settings
+**The initial check includes existing uploads.** The limit applies to each selected channel tab, or to the playlist. It is a bounded recent scan, not a full archive or a guarantee that every upload since the previous check will be found. Explicit future-only/backfill modes and a preview are still needed.
 
-### 4. **Download Integration**
-- New subscription videos automatically flow into the download queue
-- Uses existing download system (progress tracking, file organization, etc.)
-- User doesn't need to manually queue subscription content
+## Content types
 
-## Key Benefits of Current Design
+- Channel subscriptions query only the selected `/videos`, `/shorts` and `/streams` tabs. The source tab determines the video type.
+- Playlist entries use individual metadata to identify their uploader and content type. Completed livestreams are recognized from live metadata. Shorts URLs identify Shorts; dimensions/duration are a fallback, not a guaranteed classification.
+- Upcoming, currently live and still-processing livestreams are skipped. Livestream replay downloads begin after the recording becomes available.
+- Excluding a type prevents new discovery/downloads of that type. It does not delete previously saved videos.
 
-1. **Fully Automated**: Set and forget - users get new content automatically
-2. **Flexible Scheduling**: Each subscription can have its own check frequency
-3. **Quality Control**: Per-subscription quality preferences 
-4. **Optional Auto-download**: Can monitor without downloading if desired
-5. **Real-time Status**: Shows actual next check times and recent activity
+## Check now
 
-The system now bridges the gap between "I want to follow this channel" and "I have the videos on my drive" with zero manual intervention required.
+Check Now returns a queued job, not a finished result. Repeated requests reuse an existing queued/running check for the source. Progress, errors and results appear in Downloads; the subscription card shows its most recent check.
 
-What aspects would you like to dive deeper into or improve?
+Discovery compares source IDs against the library, adds missing metadata and optionally queues downloads with the subscription's quality, comments and subtitle preferences. Each playlist video's uploader is resolved independently of the playlist owner. Existing failed downloads require an explicit retry.
+
+## Edit, pause and resume
+
+Editing affects subsequent checks and newly queued downloads. Already queued downloads retain their preferences. Audio-track selection is not implemented.
+
+Pause disables future scheduled checks. It does not stop a current check or remove queued downloads. A manual check is still available. Resume restores the schedule; it does not trigger an immediate check.
+
+## Remove a source or video
+
+Removing a subscription leaves its library videos and their files intact. A running check must finish before the subscription can be removed.
+
+Removing a video's local files retains a `deleted` record. Discovery will not download it again. The Removed filter exposes these records; Download explicitly restores one. Active/queued downloads must finish or be removed from the queue before their files can be removed.

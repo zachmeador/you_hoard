@@ -1,5 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import Dialog from './Dialog.svelte'
+  import { qualityOptions } from '../lib/quality.js'
   
   export let show = false
   
@@ -9,8 +11,8 @@
     source_url: '',
     subscription_type: 'channel',
     enabled: true,
-    auto_download: true,
-    quality_preference: '720p',
+    auto_download: false,
+    quality_preference: '1080p',
     download_comments: false,
     subtitle_languages: [],
     check_frequency: '0 * * * *',
@@ -20,17 +22,6 @@
   
   let loading = false
   let error = null
-  
-  const qualityOptions = [
-    { value: '240p', label: '240p (Low)' },
-    { value: '360p', label: '360p' },
-    { value: '480p', label: '480p' },
-    { value: '720p', label: '720p (HD)' },
-    { value: '1080p', label: '1080p (Full HD)' },
-    { value: '1440p', label: '1440p (2K)' },
-    { value: '2160p', label: '2160p (4K)' },
-    { value: 'best', label: 'Best Available' }
-  ]
   
   const scheduleOptions = [
     { value: '*/30 * * * *', label: 'Every 30 minutes' },
@@ -45,7 +36,7 @@
   const contentTypeOptions = [
     { value: 'video', label: 'Regular Videos' },
     { value: 'short', label: 'YouTube Shorts' },
-    { value: 'live', label: 'Live Streams' }
+    { value: 'live', label: 'Livestream replays' }
   ]
   
   const commonLanguages = [
@@ -103,38 +94,23 @@
     error = null
     
     try {
-      console.log('Making API call to create subscription...')
-      
-      // Add a timeout to the API call
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Request timed out after 60 seconds')), 65000)
-      )
-      
-      const apiPromise = window.youHoard.apiCall('/api/subscriptions', {
+      await window.youHoard.apiCall('/api/subscriptions', {
         method: 'POST',
         body: JSON.stringify(form)
       })
-      
-      const result = await Promise.race([apiPromise, timeoutPromise])
-      console.log('Subscription created successfully:', result)
       
       dispatch('created')
       resetForm()
     } catch (err) {
       console.error('Failed to create subscription:', err)
-      if (err.message.includes('timed out')) {
-        error = 'Request timed out. The YouTube URL might be invalid or the server is busy. Please try again.'
-      } else if (err.message.includes('HTTP error')) {
-        error = `Server error: ${err.message}. Please check the YouTube URL and try again.`
-      } else {
-        error = err.message || 'Failed to create subscription'
-      }
+      error = err.message || 'Failed to create subscription'
     } finally {
       loading = false
     }
   }
   
   function handleCancel() {
+    if (loading) return
     show = false
     resetForm()
   }
@@ -144,8 +120,8 @@
       source_url: '',
       subscription_type: 'channel',
       enabled: true,
-      auto_download: true,
-      quality_preference: '720p',
+      auto_download: false,
+      quality_preference: '1080p',
       download_comments: false,
       subtitle_languages: [],
       check_frequency: '0 * * * *',
@@ -157,11 +133,11 @@
 </script>
 
 {#if show}
-  <div class="modal show">
+  <Dialog bind:show label="Add subscription" width={600} busy={loading}>
     <div class="modal-content large-modal">
       <div class="modal-header">
         <h3>Add Subscription</h3>
-        <button class="modal-close" on:click={handleCancel}>&times;</button>
+        <button class="modal-close" aria-label="Close" on:click={handleCancel} disabled={loading}>&times;</button>
       </div>
       
       <div class="modal-body">
@@ -218,7 +194,7 @@
                   {/each}
                 </div>
                 <div class="field-help">
-                  Select which types of content to include in this subscription
+                  Choose independently for this subscription. Upcoming and currently live streams are skipped.
                 </div>
               </fieldset>
             </div>
@@ -233,7 +209,8 @@
                 max="200"
               />
               <div class="field-help">
-                Maximum number of latest videos to check (1-200)
+                Check the latest 1–200 entries per selected channel tab, or from the playlist.
+                The first check includes existing uploads; this is not a complete-channel archive.
               </div>
             </div>
           </div>
@@ -247,7 +224,7 @@
                 Auto-download new videos
               </label>
               <div class="field-help">
-                Automatically download new videos when found
+                Download matching videos from the first check too. Leave off to discover first and download manually.
               </div>
             </div>
             
@@ -310,7 +287,7 @@
                 Enable subscription immediately
               </label>
               <div class="field-help">
-                Start monitoring this subscription right away
+                Run an initial check after saving, then check on the selected schedule.
               </div>
             </div>
           </div>
@@ -331,7 +308,7 @@
         </button>
       </div>
     </div>
-  </div>
+  </Dialog>
 {/if}
 
 <style>

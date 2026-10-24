@@ -84,10 +84,8 @@
     <div class="nav-menu">
       <a href="/" class="nav-link" use:link>Home</a>
       <a href="/videos" class="nav-link" use:link>Videos</a>
-      <a href="/channels" class="nav-link" use:link>Channels</a>
       <a href="/subscriptions" class="nav-link" use:link>Subscriptions</a>
       <a href="/downloads" class="nav-link" use:link>Downloads</a>
-      <a href="/settings" class="nav-link" use:link>Settings</a>
     </div>
     
     <div class="nav-actions">

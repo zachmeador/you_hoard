@@ -1,29 +1,48 @@
 # YouHoard roadmap
 
-### Things I need before I can use it
+### Fixing the current state of slop
 
-- Improve the quality selection options in frontend
-    - Also do they work?
-    - Does it display a custom quality now?
-- Deleting videos in the frontend doesn't work
-- What of the subscription logic is implemented? 
-    - How does quality decision get handled? 
-- Up-front de-duping of videos: youhoard should only ever allow one instance of video. So if the user adds a video that's already there -> notification it exists already
-    - A subscription tries to get a vid that exists already -> doesn't
-        - But what's the smart way to build this?
-            - Thinking the subscription functionality, for either a channel or playlist, should store metadata of all available videos. Then the subscription looks at this storage on run and finds the diff between what's 
-- When subscribing to a channel the user needs to be able to specify what kind of content on the channel should be dl'd. videos/shorts/live/podcasts are the categories on the yt site, but not sure if those are all formal objects. 
+- Consolidate and de-slop the random docs.
+- Write user flows for subscription actions.
+- Move thoughts.md contents to this
 
-What's this?:
+## Product requirements
 
-[frontend] 10:40:04 AM [vite-plugin-svelte] /Users/zachmeador/gits/you_hoard/src/components/AddVideoModal.svelte:58:2 A11y: visible, non-interactive elements with an on:click event must be accompanied by a keyboard event handler. Consider whether an interactive element such as <button type="button"> or <a> might be more appropriate. See https://svelte.dev/docs/accessibility-warnings#a11y-click-events-have-key-events for more details.
-[frontend] 10:40:04 AM [vite-plugin-svelte] /Users/zachmeador/gits/you_hoard/src/components/AddVideoModal.svelte:58:2 A11y: <div> with click handler must have an ARIA role
-[frontend] 10:40:04 AM [vite-plugin-svelte] /Users/zachmeador/gits/you_hoard/src/components/VideoDetailModal.svelte:53:2 A11y: visible, non-interactive elements with an on:click event must be accompanied by a keyboard event handler. Consider whether an interactive element such as <button type="button"> or <a> might be more appropriate. See https://svelte.dev/docs/accessibility-warnings#a11y-click-events-have-key-events for more details.
-[frontend] 10:40:04 AM [vite-plugin-svelte] /Users/zachmeador/gits/you_hoard/src/components/VideoDetailModal.svelte:53:2 A11y: <div> with click handler must have an ARIA role
+- Channel and playlist subscriptions are the primary workflow.
+- Pasting a video URL into the web UI must remain straightforward.
+- Each subscription independently selects regular videos, Shorts and livestream replays.
+- Show what will be archived, report failures clearly, and make saved videos easy to find and play.
+- Keep deployment small: FastAPI, SQLite, yt-dlp, ffmpeg and one frontend. No external search engine or broker.
 
-### Soon(tm)
+Earlier exploration notes are in [thoughts.md](thoughts.md). They are historical input, not a commitment to implement every idea. Current behavior is described in [DESIGN.md](DESIGN.md) and [subscription flows](docs/subscriptions.md).
 
-### Eventually
+## Recovery branch
 
-- MCP tools for managing library
-- Ability to supply cookies/auth/whatever to let user get private playlist content. Could you also prevent rate-limiting with this? tube archivist supposedly does this but I've never tried it.
+- [x] Enforce authentication and add first-run setup.
+- [x] Share one persistent queue between API requests and scheduled checks.
+- [x] Repair download processing, retry, output paths and restart recovery.
+- [x] Bound source scans and apply per-subscription content filters.
+- [x] Pass quality, comment and subtitle preferences into queued downloads.
+- [x] Show real job states, errors and subscription check results.
+- [x] Add authenticated local playback and safe media removal with re-download suppression.
+- [x] Fix frontend serving/proxying and add integration tests and dependency locks.
+- [ ] Verify against current YouTube, not just isolated tests.
+
+## Before daily use
+
+1. **Subscription preview and backfill.** Resolve a source before saving and show the initial plan. Separate future-only, latest N and complete archive modes. Make limits and content filters explicit.
+2. **Live-source verification.** Exercise regular videos, Shorts and completed streams on real channels and a mixed playlist. Handle missing tabs and unavailable videos without misleading success.
+3. **Useful settings.** Default quality, download preferences, disk space, cookie-file health and dependency versions. Only expose settings that work.
+4. **Deployment and preservation.** One-container packaging, non-root file ownership, SQLite backup/restore and missing-file detection.
+5. **TubeArchivist import.** Read-only preview of an exported sample, then import existing files and subscriptions without re-downloading.
+
+## Later
+
+- Source inventory and playlist membership, distinct from globally deduplicated files.
+- Actual interruption of active transfers and postprocessing.
+- Channel browsing, sorting, bulk library actions and tags.
+- Watched/resume state and subtitle playback.
+- Private-source management and clearer expired-cookie diagnostics.
+- API/MCP tooling after the human workflow is dependable.
+
+The [recovery assessment](docs/revival.md) contains the baseline findings and acceptance criteria. Channels and Settings remain unimplemented; a passing build is not a declaration of release readiness.

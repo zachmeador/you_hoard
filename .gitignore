@@ -51,6 +51,8 @@ coverage.xml
 # YouHoard specific
 youhoard.db
 youhoard.db-journal
+youhoard.db-wal
+youhoard.db-shm
 storage/
 logs/
 *.log
@@ -68,7 +70,6 @@ Thumbs.db
 *.tmp
 *.bak
 *.cache 
-uv.lock
 cookies.txt
 
 # Node.js
@@ -84,7 +85,6 @@ dist/
 build/
 app/static/dist/
 
-# Package manager lock files
-package-lock.json
+# Unused package managers
 yarn.lock
 docs/example-youtube-links.md

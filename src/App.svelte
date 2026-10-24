@@ -52,22 +52,22 @@
         const response = await fetch(url, config)
         
         if (!response.ok) {
-          if (response.status === 401) {
-            authApi.logout() // Force re-login
-            throw new Error('Authentication required')
-          }
-          throw new Error(`HTTP error! status: ${response.status}`)
+          if (response.status === 401) authApi.expire()
+          const body = await response.json().catch(() => ({}))
+          const detail = body.detail
+          const message = Array.isArray(detail) ? detail.map(item => item.msg).join('; ')
+            : typeof detail === 'object' && detail ? detail.message : detail
+          throw new Error(message || `Request failed (${response.status})`)
         }
         
         return await response.json()
       } catch (error) {
         console.error('API call failed:', error)
-        window.youHoard.showToast(`Error: ${error.message}`, 'error')
         throw error
       }
     },
     formatFileSize: (bytes) => {
-      if (bytes === 0) return '0 Bytes'
+      if (!Number.isFinite(bytes) || bytes <= 0) return '0 Bytes'
       const k = 1024
       const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
       const i = Math.floor(Math.log(bytes) / Math.log(k))

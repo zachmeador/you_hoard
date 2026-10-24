@@ -41,7 +41,8 @@
       <div class="search-group">
         <input 
           type="text" 
-          placeholder="Search videos..." 
+          placeholder="Search videos..."
+          aria-label="Search videos"
           class="search-input"
           bind:value={searchText}
           on:keydown={handleKeydown}
@@ -50,15 +51,16 @@
       </div>
       
       <div class="filter-group">
-        <select class="filter-select" bind:value={selectedStatus} on:change={handleStatusChange}>
+        <select class="filter-select" aria-label="Download status" bind:value={selectedStatus} on:change={handleStatusChange}>
           <option value="">All Status</option>
           <option value="completed">Downloaded</option>
           <option value="downloading">Downloading</option>
           <option value="pending">Pending</option>
           <option value="failed">Failed</option>
+          <option value="deleted">Removed (remembered)</option>
         </select>
         
-        <select class="filter-select" bind:value={selectedChannel} on:change={handleChannelChange}>
+        <select class="filter-select" aria-label="Channel" bind:value={selectedChannel} on:change={handleChannelChange}>
           <option value="">All Channels</option>
           {#each channels as channel}
             <option value={channel.id}>{channel.name}</option>

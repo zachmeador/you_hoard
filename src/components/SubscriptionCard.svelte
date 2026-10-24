@@ -34,7 +34,7 @@
     const typeMap = {
       'video': 'Videos',
       'short': 'Shorts', 
-      'live': 'Lives'
+      'live': 'Livestream replays'
     }
     
     return types.map(type => typeMap[type] || type).join(', ')
@@ -58,7 +58,7 @@
   <div class="card-header">
     <div class="subscription-header">
       <div class="channel-info">
-        <h3 class="channel-name">{subscription.channel_name}</h3>
+        <h3 class="channel-name">{subscription.extra_metadata?.source_title || subscription.channel_name}</h3>
         <div class="subscription-meta">
           <span class="subscription-type">{subscription.subscription_type}</span>
           <span class="content-types">{formatContentTypes(subscription.content_types)}</span>
@@ -99,6 +99,20 @@
       {/if}
     </div>
     
+    {#if subscription.last_job}
+      <div class="check-result" aria-live="polite">
+        <strong>Last check: {subscription.last_job.status}</strong>
+        {#if subscription.last_job.error_message}
+          <p class="check-error">{subscription.last_job.error_message}</p>
+        {:else if subscription.last_job.result_data}
+          <p>{subscription.last_job.result_data.videos_added || 0} new · {subscription.last_job.result_data.videos_queued || 0} queued</p>
+          {#if subscription.last_job.result_data.errors?.length}
+            <p class="check-error">{subscription.last_job.result_data.errors.length} entries failed. See Downloads for details.</p>
+          {/if}
+        {/if}
+      </div>
+    {/if}
+    <a href={subscription.source_url} target="_blank" rel="noreferrer">Source on YouTube</a>
     <div class="schedule-info">
       <div class="schedule-label">Schedule:</div>
       <div class="schedule-value">{subscription.check_frequency || '0 * * * *'}</div>
@@ -123,7 +137,7 @@
       <button 
         class="btn btn-sm btn-secondary"
         on:click={() => handleAction('check')}
-        disabled={!subscription.enabled}
+        disabled={['queued', 'processing'].includes(subscription.last_job?.status)}
         title="Check for new content now"
       >
         Check Now
@@ -288,6 +302,9 @@
     color: var(--terminal-amber);
   }
   
+  .check-result { margin: var(--space-3) 0; overflow-wrap: anywhere; font-size: 0.8rem; }
+  .check-error { color: var(--error); }
+
   .schedule-info {
     background: var(--surface-hover);
     border-radius: var(--radius);

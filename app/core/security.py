@@ -1,145 +1,98 @@
-"""
-Security utilities for YouHoard
-"""
-from datetime import datetime, timedelta
-from typing import Optional
+"""Password hashing and persistent cookie/bearer sessions."""
+
+import asyncio
 import secrets
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from fastapi import HTTPException, Request
 from passlib.context import CryptContext
-from fastapi import HTTPException, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.core.config import settings
+from app.core.database import Database
 
-
-# Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class SecurityManager:
-    """Handles authentication and security operations"""
-    
-    def __init__(self, db):
+    def __init__(self, db: Database):
         self.db = db
-    
+
     @staticmethod
     def hash_password(password: str) -> str:
-        """Hash a password for storing"""
         return pwd_context.hash(password)
-    
+
     @staticmethod
-    def verify_password(plain_password: str, hashed_password: str) -> bool:
-        """Verify a stored password against provided password"""
-        return pwd_context.verify(plain_password, hashed_password)
-    
+    def verify_password(password: str, password_hash: str) -> bool:
+        try:
+            return pwd_context.verify(password, password_hash)
+        except ValueError:
+            return False
+
     async def create_session(self, user_id: int) -> str:
-        """Create a new session for a user"""
-        session_token = secrets.token_urlsafe(32)
-        created_at = datetime.utcnow()
+        token = secrets.token_urlsafe(32)
+        created_at = datetime.now(timezone.utc)
         expires_at = created_at + timedelta(minutes=settings.SESSION_EXPIRE_MINUTES)
-        await self.db.insert("sessions", {
-            "token": session_token,
-            "user_id": user_id,
-            "created_at": created_at.isoformat(),
-            "expires_at": expires_at.isoformat()
-        })
-        return session_token
-    
-    async def get_session(self, session_token: str) -> Optional[dict]:
-        """Get session data if valid"""
-        session = await self.db.execute_one(
-            "SELECT * FROM sessions WHERE token = ?",
-            (session_token,)
+        await self.db.insert(
+            "sessions",
+            {
+                "token": token,
+                "user_id": user_id,
+                "created_at": created_at.isoformat(),
+                "expires_at": expires_at.isoformat(),
+            },
         )
+        return token
+
+    async def get_session(self, token: str) -> dict[str, Any] | None:
+        session = await self.db.execute_one("SELECT * FROM sessions WHERE token = ?", (token,))
         if not session:
             return None
-        
         expires_at = datetime.fromisoformat(session["expires_at"])
-        if datetime.utcnow() > expires_at:
-            # Session expired
-            await self.db.delete("sessions", "token = ?", (session_token,))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) >= expires_at:
+            await self.delete_session(token)
             return None
-        
         return {
             "user_id": session["user_id"],
             "created_at": datetime.fromisoformat(session["created_at"]),
-            "expires_at": expires_at
+            "expires_at": expires_at,
         }
-    
-    async def delete_session(self, session_token: str) -> None:
-        """Delete a session"""
-        await self.db.delete("sessions", "token = ?", (session_token,))
-    
-    async def authenticate_user(self, username: str, password: str) -> Optional[dict]:
-        """Authenticate a user with username and password"""
-        user = await self.db.execute_one(
-            "SELECT * FROM users WHERE username = ?",
-            (username,)
-        )
-        
-        if not user:
-            return None
-        
-        if not self.verify_password(password, user["password_hash"]):
-            return None
-        
-        return user
-    
-    async def create_user(self, username: str, password: str) -> int:
-        """Create a new user"""
-        # Check if user already exists
-        existing = await self.db.execute_one(
-            "SELECT id FROM users WHERE username = ?",
-            (username,)
-        )
-        
-        if existing:
-            raise ValueError("User already exists")
-        
-        # Create new user
-        user_id = await self.db.insert("users", {
-            "username": username,
-            "password_hash": self.hash_password(password)
-        })
-        
-        return user_id
+
+    async def delete_session(self, token: str) -> None:
+        await self.db.delete("sessions", "token = ?", (token,))
+
+    async def authenticate_user(self, username: str, password: str) -> dict[str, Any] | None:
+        user = await self.db.execute_one("SELECT * FROM users WHERE username = ?", (username,))
+        if user and await asyncio.to_thread(self.verify_password, password, user["password_hash"]):
+            return user
+        return None
 
 
-class SessionBearer(HTTPBearer):
-    """Custom authentication scheme using Bearer tokens for sessions"""
-    
-    def __init__(self, security_manager: SecurityManager, auto_error: bool = True):
-        super().__init__(auto_error=auto_error)
-        self.security_manager = security_manager
-    
-    async def __call__(self, request: Request) -> Optional[dict]:
-        credentials: HTTPAuthorizationCredentials = await super().__call__(request)
-        
-        if not credentials:
-            if self.auto_error:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Invalid authentication credentials"
-                )
-            return None
-        
-        session = await self.security_manager.get_session(credentials.credentials)
-        
-        if not session:
-            if self.auto_error:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Invalid or expired session"
-                )
-            return None
-        
-        return session
+def session_token(request: Request) -> str | None:
+    header = request.headers.get("Authorization")
+    if header is None:
+        return request.cookies.get("session_token")
+    scheme, _, token = header.partition(" ")
+    return token if scheme.lower() == "bearer" and token else None
 
 
-def get_current_user(request: Request) -> dict:
-    """Get current user from request state"""
-    if not hasattr(request.state, "user"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated"
-        )
-    return request.state.user 
+def require_same_origin(request: Request) -> None:
+    origin = request.headers.get("Origin")
+    if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+
+
+async def get_auth(request: Request) -> dict[str, Any]:
+    token = session_token(request)
+    session = await SecurityManager(request.app.state.db).get_session(token) if token else None
+    if not session:
+        raise HTTPException(status_code=401, detail="Please log in to continue")
+    if not request.headers.get("Authorization") and request.method not in (
+        "GET",
+        "HEAD",
+        "OPTIONS",
+    ):
+        require_same_origin(request)
+    return session
