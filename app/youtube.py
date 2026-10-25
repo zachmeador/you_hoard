@@ -506,12 +506,14 @@ class YouTube:
                 chat = wants_chat(raw, request.live_chat)
                 audio = extra_audio(raw, request.audio_languages)
                 comment_count = raw.get("comment_count")
-                later = copy.deepcopy(raw)
-                later.pop("__post_extractor", None)
+                pristine = copy.deepcopy(raw)
+                pristine.pop("__post_extractor", None)
 
                 selector = format_selector(cap, audio)
                 # Several audio streams make yt-dlp pick MKV; MP4 holds them when the codecs fit.
-                merge = "mp4" if audio and fits_mp4(self._selected(later, selector)) else "mp4/mkv"
+                merge = (
+                    "mp4" if audio and fits_mp4(self._selected(pristine, selector)) else "mp4/mkv"
+                )
                 options = self.options(
                     format=selector,
                     format_sort=FORMAT_SORT,
@@ -535,11 +537,11 @@ class YouTube:
             saved: list[Track] = []
             if tracks or chat:
                 progress({"status": "processing"})
-                saved = self._extras(later, request, tracks, chat, check_cancelled)
+                saved = self._extras(pristine, request, tracks, chat, check_cancelled)
             info["_youhoard"] = {"subtitles": [track.as_dict() for track in saved]}
             if request.sponsorblock:
                 check_cancelled()
-                segments = self._segments(later)
+                segments = self._segments(pristine)
                 if segments is not None:
                     info["sponsorblock_chapters"] = segments
             return info

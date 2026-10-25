@@ -12,6 +12,8 @@ ALTER TABLE videos ADD COLUMN comment_count INTEGER;
 -- JSON list of {lang, name, source} for each saved subtitle track.
 ALTER TABLE videos ADD COLUMN subtitle_tracks TEXT;
 
+CREATE INDEX videos_views ON videos (view_count);
+
 -- NULL means the library default.
 ALTER TABLE subscriptions ADD COLUMN audio_languages TEXT;
 ALTER TABLE subscriptions ADD COLUMN auto_captions INTEGER;

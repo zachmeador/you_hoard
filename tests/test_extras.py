@@ -143,6 +143,28 @@ def test_comments_can_be_sorted_newest_first_and_paged(archive):
     assert first["total"] == second["total"] == third["total"] == 5
 
 
+def test_damaged_comment_data_still_pages(archive):
+    archive.youtube.add(
+        VIDEO,
+        comments=[
+            {"id": "x", "parent": "y", "text": "A loop", "timestamp": 3},
+            {"id": "y", "parent": "x", "text": "The other half", "timestamp": 4},
+            {"id": "self", "parent": "self", "text": "Its own parent"},
+            {"id": "top", "parent": "root", "text": "Fine", "like_count": "many"},
+            {"id": "deep", "parent": "top.1", "text": "A reply to a reply", "timestamp": 9},
+            {"id": "top.1", "parent": "top", "text": "Reply", "timestamp": 8},
+            {"text": "No id at all"},
+            "not even a comment",
+        ],
+    )
+    video = archived(archive, download_comments=True)
+    page = comments_of(archive, video)
+    assert sorted(c["id"] for c in page["items"]) == ["self", "top", "x", "y"]
+    top = next(c for c in page["items"] if c["id"] == "top")
+    assert top["like_count"] == 0
+    assert [r["id"] for r in top["replies"]] == ["top.1", "deep"]
+
+
 def test_videos_without_saved_comments_have_none(archive):
     archive.youtube.add(VIDEO)
     video = archived(archive)
@@ -183,6 +205,12 @@ def test_live_chat_replay_is_parsed_into_messages(archive):
             {"t": 61.0, "author": "Grace", "text": "$5.00 thanks!"},
         ]
     }
+
+    window = archive.client.get(video["chat_url"], params={"since": 2.5, "until": 61}).json()
+    assert [message["author"] for message in window["items"]] == ["Ada"]
+    later = archive.client.get(video["chat_url"], params={"since": 3}).json()
+    assert [message["author"] for message in later["items"]] == ["Grace"]
+    assert archive.client.get(video["chat_url"], params={"since": -1}).status_code == 422
 
 
 def test_chat_is_only_kept_when_asked_for_and_available(archive):

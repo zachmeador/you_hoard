@@ -7,7 +7,12 @@ import pytest
     "path",
     [
         "/api/videos",
+        "/api/videos/counts",
+        "/api/videos/1/comments",
+        "/api/videos/1/chat",
         "/api/channels",
+        "/api/channels/1/avatar",
+        "/api/channels/1/banner",
         "/api/subscriptions",
         "/api/jobs",
         "/api/settings",

@@ -9,6 +9,7 @@ from app.languages import language_name
 UPLOADED, AUTO, TRANSLATED = "uploaded", "auto", "translated"
 LIVE_CHAT = "live_chat"
 LANGUAGE = re.compile(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")
+NAMED_TRACK = re.compile(r"[A-Za-z0-9_-]{11}")
 # The codec families yt-dlp merges into MP4.
 MP4_VIDEO = {"avc1", "av01", "hevc"}
 MP4_AUDIO = {"mp4a", "ec-3", "ac-4"}
@@ -128,7 +129,14 @@ def _matching(pattern: str, uploaded: dict[str, Any], automatic: dict[str, Any])
         matcher = re.compile(pattern, re.IGNORECASE)
     except re.error:
         matcher = re.compile(re.escape(pattern), re.IGNORECASE)
-    return [key for key in (*uploaded, *automatic) if key != LIVE_CHAT and matcher.fullmatch(key)]
+    keys = [key for key in (*uploaded, *automatic) if key != LIVE_CHAT and matcher.fullmatch(key)]
+    if LANGUAGE.fullmatch(pattern) and not any(key in uploaded for key in keys):
+        # A track the uploader named is keyed "en-<11 characters>", which no region code can be.
+        prefix = pattern.lower() + "-"
+        for key in uploaded:
+            if key.lower().startswith(prefix) and NAMED_TRACK.fullmatch(key[len(prefix) :]):
+                return [key]
+    return keys
 
 
 def _name(entries: Any, lang: str) -> str:

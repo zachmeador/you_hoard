@@ -1,7 +1,12 @@
 """The parts of the yt-dlp adapter the fake bypasses, run offline against yt-dlp's own selector."""
 
+import asyncio
 from typing import Any
 
+import httpx
+import pytest
+
+from app import youtube
 from app.tracks import extra_audio, fits_mp4
 from app.youtube import YouTube, _channel_source, _entry, channel_art, format_selector
 
@@ -176,3 +181,34 @@ def test_playlist_entries_know_their_uploader_and_views():
     assert entry.view_count == 1700000000 and entry.duration == 213
     odd = _entry({**raw, "channel_id": "not-a-channel", "view_count": None}, "playlist", None)
     assert odd.channel_youtube_id is None and odd.view_count is None
+
+
+def test_images_come_over_https_within_limits(monkeypatch):
+    def serve(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/moved":
+            return httpx.Response(302, headers={"location": "https://yt3.invalid/avatar"})
+        if request.url.path == "/avatar":
+            return httpx.Response(200, content=b"\xff\xd8\xffjpeg")
+        if request.url.path == "/huge":
+            return httpx.Response(200, content=b"x" * 5000)
+        return httpx.Response(404)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        youtube.httpx,
+        "AsyncClient",
+        lambda **options: real(transport=httpx.MockTransport(serve), **options),
+    )
+    monkeypatch.setattr(youtube, "MAX_IMAGE_BYTES", 1000)
+
+    def fetch(url: str) -> bytes:
+        return asyncio.run(YouTube().fetch_image(url))
+
+    assert fetch("https://yt3.invalid/avatar") == b"\xff\xd8\xffjpeg"
+    assert fetch("https://yt3.invalid/moved") == b"\xff\xd8\xffjpeg"
+    with pytest.raises(youtube.YouTubeError, match="too large"):
+        fetch("https://yt3.invalid/huge")
+    with pytest.raises(httpx.HTTPStatusError):
+        fetch("https://yt3.invalid/missing")
+    with pytest.raises(youtube.YouTubeError, match="https"):
+        fetch("http://yt3.invalid/avatar")

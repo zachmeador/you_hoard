@@ -367,8 +367,14 @@ async def comments(
 
 
 @router.get("/{video_id}/chat")
-async def chat(video_id: int, db: Database = Depends(get_db)):
+async def chat(
+    video_id: int,
+    since: float | None = Query(None, ge=0),
+    until: float | None = Query(None, ge=0),
+    db: Database = Depends(get_db),
+):
+    """The saved chat replay; `since` and `until` (seconds) limit it to a stretch of the video."""
     path = layout.chat_for(await archived_media(db, video_id))
     if path is None:
         raise not_found("Chat replay")
-    return {"items": await asyncio.to_thread(sidecar.chat_messages, path)}
+    return {"items": await asyncio.to_thread(sidecar.chat_window, path, since, until)}

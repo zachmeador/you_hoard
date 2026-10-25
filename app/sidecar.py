@@ -1,12 +1,25 @@
 """What an archived video's files hold besides the video: chapters, comments, chat and file lists."""
 
+import bisect
+import functools
 import json
 from pathlib import Path
 from typing import Any
 
 from app import layout
 
-SUBTITLE_EXTENSIONS = {".vtt", ".srt", ".ass", ".ssa", ".ttml", ".lrc", ".json3", ".srv1", ".srv2"}
+SUBTITLE_EXTENSIONS = {
+    ".vtt",
+    ".srt",
+    ".ass",
+    ".ssa",
+    ".ttml",
+    ".lrc",
+    ".json3",
+    ".srv1",
+    ".srv2",
+    ".srv3",
+}
 CHAT_MESSAGES = ("liveChatTextMessageRenderer", "liveChatPaidMessageRenderer")
 
 
@@ -57,7 +70,7 @@ def sponsor_segments(info: dict[str, Any]) -> list[dict[str, Any]]:
     segments = [
         span
         for span in spans(info.get("sponsorblock_chapters"), "category")
-        if span["category"] and span["category"] != "chapter"
+        if span["category"] and span["category"] != "chapter" and span["end"] > span["start"]
     ]
     return sorted(segments, key=lambda segment: segment["start"])
 
@@ -94,16 +107,17 @@ def comment_threads(comments: list[Any], sort: str) -> list[dict[str, Any]]:
             comment_id = parent
         return comment_id
 
+    roots = {str(c["id"]): top_level(str(c["id"])) for c in valid}
+    tops = {comment_id for comment_id, root in roots.items() if root == comment_id}
     threads: dict[str, dict[str, Any]] = {}
     replies: list[tuple[str, dict[str, Any]]] = []
     for raw in valid:
         comment_id = str(raw["id"])
         comment = comment_out(raw)
-        root = top_level(comment_id)
-        if root == comment_id:
+        if comment_id in tops or roots[comment_id] not in tops:
             threads[comment_id] = {**comment, "replies": []}
         else:
-            replies.append((root, comment))
+            replies.append((roots[comment_id], comment))
     for root, reply in replies:
         threads[root]["replies"].append(reply)
     for thread in threads.values():
@@ -160,6 +174,22 @@ def chat_messages(path: Path) -> list[dict[str, Any]]:
     return messages
 
 
+@functools.lru_cache(maxsize=3)
+def _parsed_chat(path: str, modified: int, size: int) -> tuple[list[dict[str, Any]], list[float]]:
+    messages = chat_messages(Path(path))
+    return messages, [message["t"] for message in messages]
+
+
+def chat_window(path: Path, since: float | None, until: float | None) -> list[dict[str, Any]]:
+    """The chat messages from `since` (inclusive) to `until` (exclusive) seconds, or all of them.
+    A long replay is parsed once and kept while it is being read."""
+    stat = path.stat()
+    messages, times = _parsed_chat(str(path), stat.st_mtime_ns, stat.st_size)
+    start = 0 if since is None else bisect.bisect_left(times, since)
+    end = len(messages) if until is None else bisect.bisect_left(times, until)
+    return messages[start:end]
+
+
 def file_kind(path: Path, media: Path) -> str:
     name = path.name.lower()
     if path == media:
@@ -180,8 +210,8 @@ def files(media: Path) -> list[dict[str, Any]]:
     result = []
     for path in [media, *layout.sidecars(media)]:
         try:
-            size = path.stat().st_size
-        except OSError:
+            size, relative = path.stat().st_size, layout.relative(path)
+        except (OSError, ValueError):
             continue
-        result.append({"path": layout.relative(path), "kind": file_kind(path, media), "size": size})
+        result.append({"path": relative, "kind": file_kind(path, media), "size": size})
     return result

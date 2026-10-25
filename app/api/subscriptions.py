@@ -230,6 +230,8 @@ async def resolve_source(
         "title": source.title,
         "url": source.url,
         "channel_name": source.channel_name,
+        "channel_handle": source.channel_handle,
+        "subscriber_count": source.subscriber_count,
         "owner_name": source.owner_name,
         "existing_subscription_id": existing,
     }

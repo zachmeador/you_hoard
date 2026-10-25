@@ -87,6 +87,22 @@ def test_codes_match_whole_and_all_means_every_uploaded_track(archive):
     ]
 
 
+def test_a_track_the_uploader_named_counts_as_its_language(archive):
+    archive.youtube.add(
+        VIDEO,
+        subtitles={"en-eEY6OEpapPo": "English - English", "en-GB": "English (UK)"},
+        automatic_captions={"en": "English", "en-orig": "English (Original)"},
+    )
+    video = archived(archive, subtitle_languages=["en"])
+    assert tracks(video) == [("en-eEY6OEpapPo", "uploaded")]
+    assert video["subtitles"][0]["name"] == "English - English"
+    assert archive.client.get(video["subtitles"][0]["url"]).text.startswith("WEBVTT")
+
+    archive.youtube.add(OTHER, subtitles={"en": "English", "en-eEY6OEpapPo": "English - CC1"})
+    exact = archived(archive, OTHER, subtitle_languages=["en"])
+    assert tracks(exact) == [("en", "uploaded")]
+
+
 def test_the_sidecar_keeps_the_labels_without_the_app(archive):
     archive.youtube.add(
         VIDEO,

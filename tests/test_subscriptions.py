@@ -158,6 +158,8 @@ def test_resolve_create_and_validation(archive):
     client = archive.client
     resolved = client.post("/api/subscriptions/resolve", json={"url": CHANNEL_URL + "/videos"})
     assert resolved.json()["existing_subscription_id"] is None
+    assert resolved.json()["channel_handle"] == "@fixture"
+    assert resolved.json()["subscriber_count"] == 1234
     sub = subscribe(archive, enabled=False)
     assert sub["next_check_at"] is None and sub["last_check"] is None
     again = client.post("/api/subscriptions/resolve", json={"url": CHANNEL_URL}).json()
