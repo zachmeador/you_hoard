@@ -12,27 +12,31 @@ FROM python:3.13-slim
 COPY --from=ghcr.io/astral-sh/uv:0.13 /uv /usr/local/bin/uv
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 1000 --user-group --create-home youhoard \
+    && mkdir -p /data /media \
+    && chown youhoard:youhoard /data /media
 
+# Caches go to /tmp so the container works as any user (Compose `user:`), not only UID 1000.
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH=/opt/venv/bin:$PATH \
-    PYTHONUNBUFFERED=1
+    PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    XDG_CACHE_HOME=/tmp/cache
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
-COPY README.md main.py ./
+# Writable by everyone, so YTDLP_UPDATE_ON_START can upgrade yt-dlp whatever user runs it.
+RUN uv sync --frozen --no-dev --no-install-project \
+    && chmod -R a+rwX /opt/venv
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# The code changes most often, so it goes last: an update only rebuilds and pulls these layers.
+COPY main.py ./
 COPY app ./app
 COPY --from=frontend /src/app/static/dist ./app/static/dist
-RUN uv sync --frozen --no-dev
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN useradd --uid 1000 --user-group --create-home youhoard \
-    && mkdir -p /data /media \
-    && chown -R youhoard:youhoard /data /media /opt/venv
 USER youhoard
-
 ENV DATA_DIR=/data \
     MEDIA_DIR=/media \
     HOST=0.0.0.0 \

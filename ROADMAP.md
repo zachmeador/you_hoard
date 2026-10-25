@@ -4,7 +4,7 @@ What exists is described in [DESIGN.md](DESIGN.md). Work in progress is planned 
 
 ## Next
 
-- **Packaging.** Publish the image to GitHub's container registry, and support `PUID`/`PGID`/`UMASK` for NAS setups such as Unraid.
+- **Releases.** Tagged versions with a changelog. Today every push to `main` publishes `ghcr.io/zachmeador/you_hoard:main`.
 - **Search.** SQLite FTS5 over titles, descriptions and subtitles, which is what TubeArchivist used Elasticsearch for. Today's search matches titles, descriptions and channel names.
 - **Catching up after an import.** Imported subscriptions only download uploads that appear after their first check. They should also fetch what was published after the channel's newest archived video.
 - **Metadata refresh.** Periodically re-check archived videos to detect ones that went private or were removed (`unavailable_at`), and fill in titles for files imported without metadata.

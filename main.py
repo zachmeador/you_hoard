@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app import __version__
 from app.api import auth, channels, jobs, subscriptions, system, videos
 from app.auth import current_user
-from app.config import config
+from app.config import apply_umask, config
 from app.db import Database
 from app.jobs import JobRunner
 from app.settings import Settings
@@ -41,6 +41,7 @@ def setup_logging() -> None:
 def create_app(youtube: YouTube | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        apply_umask()
         setup_logging()
         config.media_root.mkdir(parents=True, exist_ok=True)
         db = Database(config.database_path)

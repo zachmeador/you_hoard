@@ -137,7 +137,7 @@ Svelte 5 (runes) single-page app in `src/`, built by Vite into `app/static/dist`
 
 ## Configuration
 
-Environment variables (or `.env`): `DATA_DIR` (database, logs), `MEDIA_DIR` (library), `HOST`, `PORT`, `LOG_LEVEL`, `YTDLP_COOKIE_FILE`, `YTDLP_JS_RUNTIME` (default `deno`, installed with yt-dlp's `deno` extra), `YTDLP_REQUEST_INTERVAL`. Everything else is a runtime setting in the UI.
+Environment variables (or `.env`): `DATA_DIR` (database, logs), `MEDIA_DIR` (library), `HOST`, `PORT`, `LOG_LEVEL`, `YTDLP_COOKIE_FILE`, `YTDLP_JS_RUNTIME` (default `deno`, installed with yt-dlp's `deno` extra), `YTDLP_REQUEST_INTERVAL`, `UMASK` (applied by both the server and the command line). Everything else is a runtime setting in the UI.
 
 ## Command line
 
@@ -145,4 +145,6 @@ Environment variables (or `.env`): `DATA_DIR` (database, logs), `MEDIA_DIR` (lib
 
 ## Packaging
 
-`Dockerfile` builds the frontend, then a Python image with ffmpeg and the locked dependencies (including Deno), running as UID 1000 with `/data` and `/media` volumes. `YTDLP_UPDATE_ON_START=1` upgrades yt-dlp at container start. CI runs lint, tests, the frontend check/build and an image build; Dependabot bumps the lockfile weekly.
+`Dockerfile` builds the frontend, then a Python image with ffmpeg and the locked dependencies (including Deno), with `/data` and `/media` volumes. It runs as UID 1000 by default and works as any user (Compose `user:`): caches live in `/tmp`, and the virtualenv is writable so `YTDLP_UPDATE_ON_START=1` can upgrade yt-dlp at start. The code is copied last, so an update only rebuilds and pulls small layers.
+
+CI runs lint, tests and the frontend check/build, then builds the image and smoke-tests it as 99:100 with `UMASK=002`. Pushes to `main` publish it to `ghcr.io/zachmeador/you_hoard` as `:main` and `:sha-<commit>`. Dependabot bumps the lockfile weekly.

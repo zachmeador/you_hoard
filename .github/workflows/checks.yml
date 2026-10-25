@@ -25,15 +25,44 @@ jobs:
       - run: npm run build
       - run: uv run pytest
 
+  # Builds and smoke-tests the image; pushes to main also publish it to ghcr.io.
   image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: false
+          load: true
           tags: youhoard:ci
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Smoke test as 99:100 with umask 002
+        run: |
+          dir="$RUNNER_TEMP/smoke"
+          mkdir -p "$dir/data" "$dir/media"
+          sudo chown 99:100 "$dir/data" "$dir/media"
+          docker run -d --name smoke --user 99:100 -e UMASK=002 -e YTDLP_UPDATE_ON_START=1 \
+            -v "$dir/data:/data" -v "$dir/media:/media" -p 8000:8000 youhoard:ci
+          for _ in $(seq 90); do curl -fsS http://localhost:8000/api/health && break; sleep 1; done
+          docker logs smoke
+          curl -fsS http://localhost:8000/api/health
+          docker exec smoke python -m app --help > /dev/null
+          test "$(stat -c '%u:%g %a' "$dir/data/logs")" = "99:100 775"
+          if docker logs smoke 2>&1 | grep -q 'yt-dlp update failed'; then
+            echo "::error::yt-dlp could not upgrade itself as user 99"
+            exit 1
+          fi
+      - name: Publish
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          image="ghcr.io/${{ github.repository }}"
+          docker tag youhoard:ci "$image:main"
+          docker tag youhoard:ci "$image:sha-${GITHUB_SHA::7}"
+          docker push --all-tags "$image"

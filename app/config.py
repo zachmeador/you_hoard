@@ -3,6 +3,7 @@
 Settings a user changes while the app runs live in the database (app/settings.py).
 """
 
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,10 @@ class Config(BaseSettings):
 
     SESSION_DAYS: int = 30
 
+    # Octal mask for files and folders the app creates, e.g. 002 to keep them group-writable
+    # in a shared media folder. Unset leaves the inherited mask alone.
+    UMASK: str | None = None
+
     @property
     def database_path(self) -> Path:
         return self.DATA_DIR / "youhoard.db"
@@ -38,3 +43,8 @@ class Config(BaseSettings):
 
 
 config = Config()
+
+
+def apply_umask() -> None:
+    if config.UMASK:
+        os.umask(int(config.UMASK, 8))

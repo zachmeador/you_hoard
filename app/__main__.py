@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app import tubearchivist
 from app.auth import hash_password
-from app.config import config
+from app.config import apply_umask, config
 from app.db import Database
 from app.jobs import JobRunner
 from app.scanner import run_scan
@@ -84,6 +84,7 @@ def main() -> int:
     tubearchivist.add_arguments(importer)
     importer.set_defaults(func=import_tubearchivist)
     args = parser.parse_args()
+    apply_umask()
 
     async def run() -> int:
         config.media_root.mkdir(parents=True, exist_ok=True)

@@ -54,19 +54,14 @@ Videos disappear from YouTube all the time: channels get deleted, uploads go pri
 
 ## Quick start
 
-YouHoard runs as one Docker container. There's no published image yet, so build it from this repository:
+YouHoard runs as one Docker container. Every push to `main` publishes an image to `ghcr.io/zachmeador/you_hoard:main`; there are no tagged releases yet.
 
-```bash
-git clone https://github.com/zachmeador/you_hoard.git
-cd you_hoard
-```
-
-Edit [`compose.yaml`](compose.yaml): mount your archive folder at `/media`, and set `user:` to the owner of those files so YouHoard can write there.
+Save this as `compose.yaml`, or grab [the one in this repository](compose.yaml). Mount your archive folder at `/media`, and set `user:` to the owner of those files so YouHoard can write there:
 
 ```yaml
 services:
   youhoard:
-    build: .
+    image: ghcr.io/zachmeador/you_hoard:main
     restart: unless-stopped
     user: "1000:1000"           # the owner of your media folder
     ports:
@@ -78,14 +73,16 @@ services:
       - /path/to/media:/media   # the archive
 ```
 
+Any `user:` works. On a NAS such as Unraid, media shares usually belong to `99:100`: use that, and add `UMASK: "002"` so new files stay writable for the share's group.
+
 Create the data folder yourself, so it belongs to you rather than root, then start it:
 
 ```bash
 mkdir -p data
-docker compose up -d --build
+docker compose up -d
 ```
 
-Open http://localhost:8000, create your account, and use **Add** to paste a channel, playlist or video URL.
+Open http://localhost:8000, create your account, and use **Add** to paste a channel, playlist or video URL. To update later, run `docker compose pull && docker compose up -d`. To build the image yourself instead, clone this repository, swap `image:` for `build: .`, and run `docker compose up -d --build`.
 
 > [!TIP]
 > YouTube breaks old yt-dlp releases regularly. With `YTDLP_UPDATE_ON_START=1` the container upgrades yt-dlp every time it starts, so a restart usually fixes a sudden wave of failed downloads.
@@ -100,6 +97,7 @@ Most settings live in the app under **System**: default quality, subtitle langua
 | `YTDLP_COOKIE_FILE` | none | A Netscape-format cookies file, for private playlists or when YouTube asks for a bot check |
 | `YTDLP_REQUEST_INTERVAL` | `2` | Seconds between YouTube requests |
 | `YTDLP_JS_RUNTIME`, `YTDLP_JS_RUNTIME_PATH` | `deno` | The JavaScript runtime yt-dlp needs for YouTube. Deno comes with YouHoard. |
+| `UMASK` | inherited (`022`) | Octal mask for new files and folders. `002` keeps them group-writable. |
 | `SESSION_DAYS` | `30` | How long a login lasts |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
 | `DATA_DIR`, `MEDIA_DIR` | `/data`, `/media` | Where the database and the archive live. From source, they default to `./data` and `./media`. |
@@ -192,7 +190,7 @@ The bar for a useful PR is low and the need is real. Good places to start:
 
 - **Use it and report what breaks.** YouTube changes constantly, so issues about failed downloads, odd channels or strange yt-dlp output are gold.
 - **Try the TubeArchivist import on a real backup.** The dry run writes nothing. Open an issue with anything it misreads.
-- **Pick something from the [roadmap](ROADMAP.md):** a published Docker image with `PUID`/`PGID`, full-text search, catching up after an import, a subtitle fill-in job, or audio track switching outside Safari.
+- **Pick something from the [roadmap](ROADMAP.md):** full-text search, catching up after an import, a subtitle fill-in job, audio track switching outside Safari, or tagged releases.
 - **Read a module and make it smaller.** Simplifications, deletions and clearer names are all welcome.
 
 ### Development setup

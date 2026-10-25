@@ -1,7 +1,7 @@
 services:
   youhoard:
-    build: .
-    image: youhoard
+    image: ghcr.io/zachmeador/you_hoard:main
+    # build: .   # to build the image from this checkout instead
     restart: unless-stopped
     # Run as the user that owns your media files, so downloads, removals and
     # --organize can write there.
@@ -10,6 +10,7 @@ services:
       - "8000:8000"
     environment:
       YTDLP_UPDATE_ON_START: "1"
+      # UMASK: "002"   # keep new files group-writable, e.g. on a NAS share
       # YTDLP_COOKIE_FILE: /data/cookies.txt
     volumes:
       - ./data:/data

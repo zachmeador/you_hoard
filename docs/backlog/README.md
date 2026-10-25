@@ -14,5 +14,5 @@ Where work on YouHoard is planned and tracked, in git. One file per workstream; 
 
 ## Known issues
 
-- The Docker image has never been run. Its CI build failed until the Dockerfile copied `README.md`, which `pyproject.toml` needs; confirm the next run passes.
+- The Docker image is only smoke-tested in CI: it starts, answers the health check and runs as 99:100. It hasn't run a real library yet.
 - The TubeArchivist import has only run against synthetic backups.
