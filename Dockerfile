@@ -17,9 +17,11 @@ RUN apt-get update \
     && mkdir -p /data /media \
     && chown youhoard:youhoard /data /media
 
-# Caches go to /tmp so the container works as any user (Compose `user:`), not only UID 1000.
+# uv keeps no cache, so none is baked into the image, and the other caches go to /tmp: the
+# container works as any user (Compose `user:`), not only UID 1000.
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH=/opt/venv/bin:$PATH \
     PYTHONPATH=/app \
