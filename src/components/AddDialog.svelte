@@ -1,13 +1,13 @@
 <script>
-  /** @import { DownloadPolicy, ResolvedSource, VideoType } from '../lib/types' */
+  /** @import { DownloadPolicy, ResolvedSource, ResolvedVideo, VideoType } from '../lib/types' */
   import { onMount, untrack } from 'svelte'
   import { api, errorMessage } from '../lib/api.js'
-  import { interval } from '../lib/format.js'
+  import { compact, dmy, dur, interval } from '../lib/format.js'
   import { emptyOverrides, subscriptionOverrides, videoOptions } from '../lib/overrides.js'
   import { href } from '../lib/router.svelte.js'
   import { librarySettings } from '../lib/settings.svelte.js'
   import { notify } from '../lib/toasts.svelte.js'
-  import { channelsChanged, subscriptionsChanged, ui, videosChanged } from '../lib/ui.svelte.js'
+  import { channelsChanged, closeAdd, subscriptionsChanged, ui, videosChanged } from '../lib/ui.svelte.js'
   import { classifyInput } from '../lib/urls.js'
   import Avatar from './Avatar.svelte'
   import Dialog from './Dialog.svelte'
@@ -17,14 +17,32 @@
   import SelectField from './SelectField.svelte'
   import Thumb from './Thumb.svelte'
 
-  /** @type {{ onclose: () => void }} */
-  let { onclose } = $props()
+  /** @type {Record<string, string>} */
+  const KNOWN = {
+    archived: 'Already archived',
+    downloading: 'Already downloading',
+    queued: 'Already queued',
+    failed: 'In the library, the last download failed',
+    deleted: 'In the library, its files were removed',
+    missing: 'In the library, not downloaded'
+  }
+  /** @type {Record<string, string>} */
+  const NOT_YET = {
+    is_upcoming: 'Upcoming. The download waits for the premiere.',
+    is_live: 'Live now. The download waits until the stream ends.'
+  }
+
+  const opened = untrack(() => ui.addSeq)
 
   /** @type {{ close: () => void } | undefined} */
   let dialog = $state()
   let url = $state(untrack(() => ui.addUrl))
   /** @type {ResolvedSource | null} */
   let resolved = $state(null)
+  /** @type {ResolvedVideo | null} */
+  let preview = $state(null)
+  let previewFor = $state('')
+  let requested = ''
   let busy = $state('')
   let error = $state('')
   let showOptions = $state(false)
@@ -37,12 +55,8 @@
   let every = $state(untrack(() => librarySettings.current?.check_interval_hours ?? 24))
 
   const input = $derived(classifyInput(url))
-  const mode = $derived(resolved ? 'source' : input?.kind === 'video' ? 'video' : 'idle')
-  const videoId = $derived(
-    input?.kind === 'video'
-      ? (/(?:v=|youtu\.be\/|shorts\/|live\/|embed\/|\/v\/)([\w-]{11})/.exec(input.url)?.[1] ?? input.url)
-      : ''
-  )
+  const videoId = $derived(input?.kind === 'video' ? input.id : null)
+  const mode = $derived(resolved ? 'source' : preview && previewFor === videoId ? 'video' : 'idle')
   const intervals = $derived(librarySettings.options.check_intervals.map((h) => ({ value: h, label: interval(h) })))
 
   onMount(() => {
@@ -57,10 +71,36 @@
     })
   })
 
+  // A pasted video link previews itself; channels and playlists wait for Resolve.
+  $effect(() => {
+    const id = videoId
+    if (!id || previewFor === id) return
+    const timer = setTimeout(() => resolveVideo(id), 400)
+    return () => clearTimeout(timer)
+  })
+
   function edited() {
     resolved = null
     error = ''
-    showOptions = false
+  }
+
+  /** @param {string} id @param {boolean} [again] ask even if this video was just asked about */
+  async function resolveVideo(id, again = false) {
+    if (requested === id && !again) return
+    requested = id
+    busy = 'resolve'
+    error = ''
+    try {
+      const res = await api.videos.resolve(url.trim())
+      if (videoId === id) {
+        preview = res
+        previewFor = id
+      }
+    } catch (e) {
+      if (videoId === id) error = errorMessage(e)
+    } finally {
+      busy = ''
+    }
   }
 
   /** @param {SubmitEvent} [event] */
@@ -68,18 +108,18 @@
     event?.preventDefault()
     error = ''
     if (!url.trim()) return
-    const parsed = classifyInput(url)
-    if (!parsed) {
+    if (!input) {
       error = 'Use a youtube.com or youtu.be link to a video, channel or playlist'
       return
     }
-    if (parsed.kind === 'video') {
-      document.getElementById('add-confirm')?.focus()
+    if (input.kind === 'video') {
+      if (!input.id) error = 'That video link is incomplete'
+      else await resolveVideo(input.id, true)
       return
     }
     busy = 'resolve'
     try {
-      resolved = await api.subscriptions.resolve(parsed.url)
+      resolved = await api.subscriptions.resolve(input.url)
     } catch (e) {
       error = errorMessage(e)
     } finally {
@@ -144,7 +184,7 @@
   {/if}
 {/snippet}
 
-<Dialog title="Add from YouTube" bind:this={dialog} {onclose}>
+<Dialog title="Add from YouTube" bind:this={dialog} onclose={() => closeAdd(opened)}>
   <form onsubmit={resolve}>
     <label class="label" for="add-url">YouTube URL</label>
     <div class="url-row">
@@ -164,32 +204,53 @@
 
   {#if error}<p class="form-error add-error" role="alert">{error}</p>{/if}
 
-  {#if mode === 'video'}
+  {#if mode === 'video' && preview}
     <div class="res">
       <div class="who">
         <div class="mini" style="width: 112px"><Thumb src={null} /></div>
-        <div>
+        <div style="min-width: 0">
           <span class="label">Video</span>
-          <div class="k mono">{videoId}</div>
+          <div class="ttl">{preview.title ?? preview.youtube_id}</div>
+          <div class="k">
+            {[preview.channel_name, preview.duration ? dur(preview.duration) : '', preview.published_at ? dmy(preview.published_at) : '']
+              .filter(Boolean)
+              .join(' · ')}
+          </div>
         </div>
       </div>
-      {@render options()}
-      <div class="foot">
-        <button type="button" class="btn quiet" onclick={() => dialog?.close()}>Cancel</button>
-        <button id="add-confirm" type="button" class="btn primary" disabled={busy === 'add'} onclick={addVideo}>
-          <Icon name="dl" />Add and download
-        </button>
-      </div>
+      {#if preview.existing}
+        <div class="known"><span class="st {preview.existing.status}">{KNOWN[preview.existing.status]}</span></div>
+        <div class="foot">
+          <button type="button" class="btn quiet" onclick={() => dialog?.close()}>Cancel</button>
+          <a class="btn primary" href={href(`/video/${preview.existing.video_id}`)} onclick={() => dialog?.close()}>Open it</a>
+        </div>
+      {:else}
+        {#if preview.live_status && NOT_YET[preview.live_status]}
+          <div class="known">{NOT_YET[preview.live_status]}</div>
+        {/if}
+        {@render options()}
+        <div class="foot">
+          <button type="button" class="btn quiet" onclick={() => dialog?.close()}>Cancel</button>
+          <button id="add-confirm" type="button" class="btn primary" disabled={busy === 'add'} onclick={addVideo}>
+            <Icon name="dl" />Add and download
+          </button>
+        </div>
+      {/if}
     </div>
   {:else if mode === 'source' && resolved}
     <div class="res">
       <div class="who">
         <Avatar name={resolved.title} large playlist={resolved.kind === 'playlist'} />
-        <div>
+        <div style="min-width: 0">
           <span class="label">{resolved.kind === 'playlist' ? 'Playlist' : 'Channel'}</span>
           <div class="ttl">{resolved.title}</div>
           <div class="k">
-            {#if resolved.kind === 'playlist'}by {resolved.owner_name ?? 'unknown'}{:else}<span class="mono">{resolved.youtube_id}</span>{/if}
+            {#if resolved.kind === 'playlist'}
+              by {resolved.owner_name ?? 'unknown'}
+            {:else}
+              {#if resolved.channel_handle}{resolved.channel_handle} · {/if}<span class="mono">{resolved.youtube_id}</span>{#if resolved.subscriber_count}
+                · {compact(resolved.subscriber_count)} subscribers{/if}
+            {/if}
           </div>
         </div>
       </div>

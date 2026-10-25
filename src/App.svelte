@@ -89,7 +89,9 @@
     <TabBar />
   </div>
   {#if ui.addOpen}
-    <AddDialog onclose={() => (ui.addOpen = false)} />
+    {#key ui.addSeq}
+      <AddDialog />
+    {/key}
   {/if}
 {:else if auth.phase === 'setup' || auth.phase === 'login'}
   <Auth mode={auth.phase} />

@@ -151,20 +151,32 @@ export interface VideoOptions {
 export interface Comment {
   id: string
   text: string
-  author: string
+  author: string | null
   author_id: string | null
   author_is_uploader: boolean
   author_is_verified: boolean
   is_pinned: boolean
   is_favorited: boolean
-  like_count: number | null
-  timestamp: number | string | null
+  like_count: number
+  /** Unix seconds, and only as exact as YouTube's "2 years ago" */
+  timestamp: number | null
   replies?: Comment[]
 }
 
 export interface CommentPage {
   items: Comment[]
   total: number
+}
+
+export interface ResolvedVideo {
+  youtube_id: string
+  title: string | null
+  channel_name: string | null
+  duration: number | null
+  published_at: string | null
+  live_status: string | null
+  view_count: number | null
+  existing: { video_id: number; status: VideoStatus } | null
 }
 
 export interface ChatMessage {
@@ -268,6 +280,8 @@ export interface ResolvedSource {
   title: string
   url: string
   channel_name: string | null
+  channel_handle?: string | null
+  subscriber_count?: number | null
   owner_name: string | null
   existing_subscription_id: number | null
 }

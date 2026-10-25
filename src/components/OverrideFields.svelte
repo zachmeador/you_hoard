@@ -1,7 +1,6 @@
 <script>
   /** @import { Overrides, Tri, ListMode } from '../lib/overrides.js' */
-  import { defaultLabels } from '../lib/overrides.js'
-  import { qualityLabel } from '../lib/format.js'
+  import { defaultLabels, qualityChoices } from '../lib/overrides.js'
   import { librarySettings } from '../lib/settings.svelte.js'
   import FieldSelect from './FieldSelect.svelte'
   import LanguagePicker from './LanguagePicker.svelte'
@@ -11,10 +10,7 @@
 
   const labels = $derived(defaultLabels(librarySettings.current))
   const languages = $derived(librarySettings.options.languages)
-  const qualityOptions = $derived([
-    { value: '', label: labels.quality },
-    ...librarySettings.options.qualities.map((q) => ({ value: q, label: qualityLabel(q) }))
-  ])
+  const qualityOptions = $derived(qualityChoices(librarySettings.current, librarySettings.options.qualities))
 
   /** @param {string} defaultLabel @param {string} none */
   const listOptions = (defaultLabel, none) => [
@@ -53,6 +49,7 @@
       label="Subtitle languages"
       value={value.subtitleLanguages}
       options={languages}
+      all
       onchange={(list) => set('subtitleLanguages', list)}
     />
   {/if}

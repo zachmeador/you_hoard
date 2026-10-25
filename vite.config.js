@@ -9,7 +9,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': process.env.YOUHOARD_API ?? 'http://127.0.0.1:8000'
+      // The API compares a request's Origin with its Host, so the dev server's Host must reach it as is.
+      '/api': { target: process.env.YOUHOARD_API ?? 'http://127.0.0.1:8000', changeOrigin: false }
     }
   }
 })

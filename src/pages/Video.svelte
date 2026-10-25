@@ -1,7 +1,7 @@
 <script>
   /** @import { Channel, Subscription, Video, VideoOptions } from '../lib/types' */
   import { untrack } from 'svelte'
-  import { ApiError, api } from '../lib/api.js'
+  import { api } from '../lib/api.js'
   import { confirmAction } from '../lib/confirm.svelte.js'
   import {
     bytes,
@@ -17,14 +17,14 @@
     percent,
     SUBTITLE_SOURCES
   } from '../lib/format.js'
-  import { isRetry, isWaiting } from '../lib/jobs.js'
+  import { isRetry } from '../lib/jobs.js'
   import { Loader } from '../lib/loader.svelte.js'
   import { queue } from '../lib/queue.svelte.js'
   import { href } from '../lib/router.svelte.js'
   import { system } from '../lib/system.svelte.js'
   import { videoState } from '../lib/status.js'
   import { notify } from '../lib/toasts.svelte.js'
-  import { channelsChanged, clock, ui, videosChanged } from '../lib/ui.svelte.js'
+  import { channelsChanged, clock, ui } from '../lib/ui.svelte.js'
   import Avatar from '../components/Avatar.svelte'
   import Chapters from '../components/Chapters.svelte'
   import ChatReplay from '../components/ChatReplay.svelte'
@@ -100,6 +100,8 @@
     })
   })
 
+  const reload = () => detail.run(() => api.videos.get(id), { quiet: true })
+
   /** @param {number} t */
   function seekTo(t) {
     player?.seek(t, { play: true })
@@ -123,7 +125,6 @@
     return run('watched', async () => {
       const updated = await api.videos.setWatched(target.id, !target.watched_at)
       if (detail.data) detail.data = { ...detail.data, ...updated }
-      videosChanged()
     })
   }
 
@@ -135,8 +136,7 @@
       await api.videos.download(target.id, options)
       notify.success('Download queued')
       queue.refresh().catch(() => {})
-      await detail.run(() => api.videos.get(id), { quiet: true })
-      videosChanged()
+      await reload()
     })
   }
 
@@ -147,8 +147,7 @@
       await api.jobs.act(jobId, 'cancel')
       notify.success('Download cancelled')
       queue.refresh().catch(() => {})
-      await detail.run(() => api.videos.get(id), { quiet: true })
-      videosChanged()
+      await reload()
     })
   }
 
@@ -167,8 +166,7 @@
     await run('remove', async () => {
       await api.videos.removeFiles(target.id)
       notify.success('Local files removed')
-      await detail.run(() => api.videos.get(id), { quiet: true })
-      videosChanged()
+      await reload()
       channelsChanged()
     })
   }
@@ -396,7 +394,7 @@
               {#each video.subtitles as track (track.lang)}
                 <li>
                   <span>
-                    {track.name || track.lang}<span class="lang">{track.lang}</span>
+                    {track.name || track.lang}
                     {#if SUBTITLE_SOURCES[track.source]}<span class="origin">{SUBTITLE_SOURCES[track.source]}</span>{/if}
                   </span>
                   <a

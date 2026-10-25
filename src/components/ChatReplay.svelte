@@ -1,37 +1,62 @@
 <script>
   /** @import { ChatMessage } from '../lib/types' */
-  import { onMount, tick } from 'svelte'
-  import { api } from '../lib/api.js'
+  import { tick, untrack } from 'svelte'
+  import { ApiError, api, errorMessage } from '../lib/api.js'
   import { dur } from '../lib/format.js'
-  import { Loader } from '../lib/loader.svelte.js'
 
-  const WINDOW = 150
+  /** Seconds of chat fetched at a time; a busy premiere can send thousands of messages a minute. */
+  const SPAN = 30
+  const BEHIND = 3
+  const AHEAD = 1
+  const SHOWN = 150
 
   /** @type {{ videoId: number, time: number, onseek: (t: number) => void }} */
   let { videoId, time, onseek } = $props()
 
-  /** @type {Loader<{ items: ChatMessage[] }>} */
-  const chat = new Loader()
+  /** Messages by window number (`floor(seconds / SPAN)`), loaded as playback gets there. */
+  let loaded = $state(/** @type {Record<number, ChatMessage[]>} */ ({}))
+  let error = $state('')
   /** @type {HTMLDivElement | undefined} */
   let box = $state()
   let following = true
+  /** @type {Set<number>} */
+  const requested = new Set()
 
-  const messages = $derived(chat.data?.items ?? [])
+  const current = $derived(Math.floor(Math.max(0, time) / SPAN))
   /** The messages sent by now, newest last, trimmed to what fits on screen. */
   const shown = $derived.by(() => {
-    let lo = 0
-    let hi = messages.length
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1
-      if (messages[mid].t <= time) lo = mid + 1
-      else hi = mid
-    }
-    const start = Math.max(0, lo - WINDOW)
-    return { start, items: messages.slice(start, lo) }
+    /** @type {ChatMessage[]} */
+    const all = []
+    for (let w = Math.max(0, current - BEHIND); w <= current; w++) all.push(...(loaded[w] ?? []))
+    const sent = all.filter((m) => m.t <= time)
+    return sent.slice(-SHOWN)
   })
 
-  onMount(() => {
-    chat.run(() => api.videos.chat(videoId))
+  /** @param {number} windowNumber */
+  async function load(windowNumber) {
+    requested.add(windowNumber)
+    try {
+      const res = await api.videos.chat(videoId, { since: windowNumber * SPAN, until: (windowNumber + 1) * SPAN })
+      loaded[windowNumber] = res.items
+    } catch (e) {
+      requested.delete(windowNumber)
+      error = e instanceof ApiError && e.status === 404 ? 'No chat replay was saved' : errorMessage(e)
+    }
+  }
+
+  $effect(() => {
+    const here = current
+    untrack(() => {
+      if (error) return
+      for (let w = Math.max(0, here - BEHIND); w <= here + AHEAD; w++) if (!requested.has(w)) load(w)
+      for (const key of Object.keys(loaded)) {
+        const w = Number(key)
+        if (w < here - BEHIND - 4 || w > here + AHEAD + 4) {
+          delete loaded[w]
+          requested.delete(w)
+        }
+      }
+    })
   })
 
   $effect(() => {
@@ -48,15 +73,15 @@
 
 <section aria-labelledby="chat-h">
   <h2 class="label" id="chat-h">Live chat</h2>
-  {#if chat.error}
-    <p class="note">{chat.error}</p>
+  {#if error}
+    <p class="note">{error}</p>
   {:else}
     <!-- The log scrolls on its own, so it has to be reachable from the keyboard. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div class="chat" role="log" aria-label="Live chat replay" tabindex="0" bind:this={box} {onscroll}>
-      {#if shown.items.length}
+      {#if shown.length}
         <ul>
-          {#each shown.items as message, i (shown.start + i)}
+          {#each shown as message (message)}
             <li>
               <button type="button" class="t" aria-label="Jump to {dur(message.t)}" onclick={() => onseek(message.t)}>
                 {dur(message.t)}
@@ -67,7 +92,7 @@
           {/each}
         </ul>
       {:else}
-        <p class="none">{chat.loading ? 'Loading…' : 'No messages yet'}</p>
+        <p class="none">No messages yet</p>
       {/if}
     </div>
   {/if}

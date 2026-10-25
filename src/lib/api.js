@@ -140,10 +140,18 @@ export const api = {
      */
     comments: (id, query) => request('GET', `/videos/${id}/comments` + qs(query)),
     /**
+     * The saved live chat replay, or just the stretch from `since` up to `until` seconds.
      * @param {number} id
+     * @param {{ since?: number, until?: number }} [window]
      * @returns {Promise<{ items: T.ChatMessage[] }>}
      */
-    chat: (id) => request('GET', `/videos/${id}/chat`),
+    chat: (id, window = {}) => request('GET', `/videos/${id}/chat` + qs(window)),
+    /**
+     * A preview of a video link, and whether the library has the video already.
+     * @param {string} url
+     * @returns {Promise<T.ResolvedVideo>}
+     */
+    resolve: (url) => request('POST', '/videos/resolve', { url }),
     /**
      * @param {number} id
      * @returns {Promise<{ ok: boolean }>}

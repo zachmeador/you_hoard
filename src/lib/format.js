@@ -109,11 +109,21 @@ export function rel(value, now = Date.now()) {
   return future ? `in ${out}` : `${out} ago`
 }
 
-/** @param {number | string | null | undefined} unix seconds, or an ISO timestamp */
-export function commentDate(unix) {
-  if (unix == null || unix === '') return ''
-  if (typeof unix === 'string') return dmy(unix)
-  return dmy(new Date(unix < 1e12 ? unix * 1000 : unix).toISOString())
+/**
+ * "3 weeks ago": as precise as a timestamp that YouTube itself only gave as "3 weeks ago".
+ * @param {number | null | undefined} unix seconds
+ * @param {number} [now]
+ */
+export function coarseAgo(unix, now = Date.now()) {
+  if (unix == null) return ''
+  const days = Math.floor((now - unix * 1000) / 86400000)
+  /** @param {number} n @param {string} unit */
+  const plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'} ago`
+  if (days < 1) return 'today'
+  if (days < 7) return plural(days, 'day')
+  if (days < 30) return plural(Math.floor(days / 7), 'week')
+  if (days < 365) return plural(Math.floor(days / 30), 'month')
+  return plural(Math.floor(days / 365), 'year')
 }
 
 /** @param {number | null | undefined} n */
@@ -209,6 +219,9 @@ try {
   languageNames = null
 }
 
+/** The subtitle pattern that fetches every uploaded track. */
+export const ALL_UPLOADED = { code: 'all', name: 'All uploaded' }
+
 /**
  * @param {string} code
  * @param {Language[]} [known] curated names from the server take precedence
@@ -216,12 +229,20 @@ try {
 export function languageName(code, known = []) {
   const curated = known.find((l) => l.code === code)
   if (curated) return curated.name
+  if (code === ALL_UPLOADED.code) return ALL_UPLOADED.name
   try {
     return languageNames?.of(code) ?? code
   } catch {
     return code
   }
 }
+
+/**
+ * A language code short enough for a button, or nothing when the code is not a plain one
+ * (uploader-named caption tracks have opaque codes like "en-eEY6OEpapPo").
+ * @param {string} code
+ */
+export const shortLang = (code) => (/^[a-z]{2,3}(-[A-Za-z0-9]{2,4})?$/.test(code) ? code : '')
 
 /** @type {Record<string, string>} */
 const VCODECS = { avc1: 'H.264', vp9: 'VP9', av01: 'AV1', hevc: 'HEVC' }

@@ -157,6 +157,7 @@
                 label="Subtitle languages"
                 value={f.subtitle_languages}
                 options={options.languages}
+                all
                 onchange={(list) => {
                   f.subtitle_languages = list
                 }}

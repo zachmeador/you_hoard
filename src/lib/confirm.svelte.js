@@ -1,6 +1,7 @@
 /** @typedef {{ title: string, message: string, confirmLabel: string, danger?: boolean }} ConfirmRequest */
+/** @typedef {ConfirmRequest & { resolve: (ok: boolean) => void }} ActiveConfirm */
 
-/** @type {{ current: (ConfirmRequest & { resolve: (ok: boolean) => void }) | null }} */
+/** @type {{ current: ActiveConfirm | null }} */
 export const confirmState = $state({ current: null })
 
 /**

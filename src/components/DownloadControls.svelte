@@ -1,8 +1,7 @@
 <script>
   /** @import { IconName } from '../lib/icons.js' */
   /** @import { VideoOptions } from '../lib/types' */
-  import { qualityLabel } from '../lib/format.js'
-  import { defaultLabels, emptyOverrides, videoOptions } from '../lib/overrides.js'
+  import { emptyOverrides, qualityChoices, videoOptions } from '../lib/overrides.js'
   import { librarySettings } from '../lib/settings.svelte.js'
   import Icon from './Icon.svelte'
   import OverrideFields from './OverrideFields.svelte'
@@ -14,10 +13,7 @@
   let overrides = $state(emptyOverrides())
   let open = $state(false)
 
-  const qualities = $derived([
-    { value: '', label: defaultLabels(librarySettings.current).quality },
-    ...librarySettings.options.qualities.map((q) => ({ value: q, label: qualityLabel(q) }))
-  ])
+  const qualities = $derived(qualityChoices(librarySettings.current, librarySettings.options.qualities))
 </script>
 
 <SelectField

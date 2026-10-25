@@ -1,7 +1,7 @@
 <script>
   /** @import { Subtitle, VideoDetail } from '../lib/types' */
   import { untrack } from 'svelte'
-  import { dur, languageName, qualityWithRate, SUBTITLE_SOURCES } from '../lib/format.js'
+  import { dur, languageName, qualityWithRate, shortLang, SUBTITLE_SOURCES } from '../lib/format.js'
   import { prefs } from '../lib/prefs.svelte.js'
   import Icon from './Icon.svelte'
 
@@ -57,11 +57,10 @@
   }
 
   $effect(() => {
-    const active = caption
-    void subtitles.length
+    const index = subtitles.findIndex((t) => t.lang === caption)
     const list = el?.textTracks
     if (!list) return
-    for (let i = 0; i < list.length; i++) list[i].mode = list[i].language === active ? 'showing' : 'disabled'
+    for (let i = 0; i < list.length; i++) list[i].mode = i === index ? 'showing' : 'disabled'
   })
 
   $effect(() => {
@@ -319,7 +318,7 @@
             aria-expanded={menu === 'captions'}
             onclick={() => (menu = menu === 'captions' ? '' : 'captions')}
           >
-            CC{caption ? ` ${caption}` : ''}<span class="sr"> subtitles</span>
+            CC{shortLang(caption) ? ` ${shortLang(caption)}` : ''}<span class="sr"> subtitles</span>
           </button>
           {#if menu === 'captions'}
             <div class="pmenu" role="menu" aria-label="Subtitles">

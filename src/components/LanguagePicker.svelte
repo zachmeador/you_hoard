@@ -1,12 +1,15 @@
 <script>
   /** @import { Language } from '../lib/types' */
-  import { languageName } from '../lib/format.js'
+  import { ALL_UPLOADED, languageName } from '../lib/format.js'
   import Icon from './Icon.svelte'
 
-  /** @type {{ label: string, value: string[], options: Language[], onchange: (value: string[]) => void }} */
-  let { label, value, options, onchange } = $props()
+  /** @type {{ label: string, value: string[], options: Language[], all?: boolean, onchange: (value: string[]) => void }} */
+  let { label, value, options, all = false, onchange } = $props()
 
-  const available = $derived(options.filter((o) => !value.includes(o.code)))
+  const available = $derived([...(all ? [ALL_UPLOADED] : []), ...options].filter((o) => !value.includes(o.code)))
+
+  /** @param {string} code @param {string} name */
+  const text = (code, name) => (code === ALL_UPLOADED.code ? name : `${name} · ${code}`)
 
   /** @param {string} code */
   function add(code) {
@@ -25,7 +28,7 @@
       {#each value as code (code)}
         {@const name = languageName(code, options)}
         <li>
-          <span>{name} · {code}</span>
+          <span>{text(code, name)}</span>
           <button type="button" aria-label="Remove {name}" onclick={() => remove(code)}><Icon name="x" /></button>
         </li>
       {/each}
@@ -43,7 +46,7 @@
       >
         <option value="">Add language…</option>
         {#each available as option (option.code)}
-          <option value={option.code}>{option.name} · {option.code}</option>
+          <option value={option.code}>{text(option.code, option.name)}</option>
         {/each}
       </select>
     </label>

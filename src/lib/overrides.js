@@ -1,4 +1,5 @@
 /** @import { Settings, Subscription, SubscriptionOptions, VideoOptions } from './types' */
+import { qualityLabel } from './format.js'
 
 /**
  * @typedef {'' | 'true' | 'false'} Tri an optional yes/no: empty means the library default
@@ -115,3 +116,13 @@ export function defaultLabels(settings) {
     sponsorblock: pick(settings.sponsorblock, 'save', 'skip')
   }
 }
+
+/**
+ * The qualities to pick from, led by "use the library default".
+ * @param {Settings | null} settings
+ * @param {string[]} qualities
+ */
+export const qualityChoices = (settings, qualities) => [
+  { value: '', label: defaultLabels(settings).quality },
+  ...qualities.map((q) => ({ value: q, label: qualityLabel(q) }))
+]

@@ -2,6 +2,7 @@ import { matchRoute, navigate, router } from './router.svelte.js'
 
 export const ui = $state({
   addOpen: false,
+  addSeq: 0,
   addUrl: '',
   videosVersion: 0,
   subscriptionsVersion: 0,
@@ -10,8 +11,18 @@ export const ui = $state({
 
 /** @param {string} [url] a URL to resolve right away */
 export function openAdd(url = '') {
+  ui.addSeq++
   ui.addUrl = url
   ui.addOpen = true
+}
+
+/**
+ * Closes the add dialog opened as `seq`. A dialog that is still closing when the next one opens
+ * must not close it: its close event arrives late.
+ * @param {number} seq
+ */
+export function closeAdd(seq) {
+  if (seq === ui.addSeq) ui.addOpen = false
 }
 
 export function videosChanged() {

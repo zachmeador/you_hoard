@@ -2,7 +2,8 @@
   /** @import { Comment } from '../lib/types' */
   import { onMount } from 'svelte'
   import { api, errorMessage } from '../lib/api.js'
-  import { commentDate, compact, int, parseClock, textParts } from '../lib/format.js'
+  import { clock } from '../lib/ui.svelte.js'
+  import { coarseAgo, compact, int, parseClock, textParts } from '../lib/format.js'
   import Icon from './Icon.svelte'
   import SelectField from './SelectField.svelte'
 
@@ -68,13 +69,13 @@
 
 {#snippet body(/** @type {Comment} */ comment)}
   <div class="cm-h">
-    <b class="who">{comment.author}</b>
+    <b class="who">{comment.author ?? 'Unknown'}</b>
     {#if comment.author_is_uploader}<span class="kindtag">Uploader</span>{/if}
     {#if comment.author_is_verified}
       <span class="verified"><Icon name="verified" /><span class="sr">Verified</span></span>
     {/if}
     {#if comment.is_pinned}<span class="pin"><Icon name="pin" />Pinned</span>{/if}
-    <span class="when">{commentDate(comment.timestamp)}</span>
+    <span class="when">{coarseAgo(comment.timestamp, clock.now)}</span>
   </div>
   <p class="cm-t">
     {#each textParts(comment.text, duration) as part, i (i)}
