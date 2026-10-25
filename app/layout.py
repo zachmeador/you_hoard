@@ -181,7 +181,7 @@ def move_media(media: Path, directory: Path, basename: str) -> Path:
         os.replace(sidecar, directory / f"{basename}.{rest}")
     target = directory / f"{basename}{media.suffix}"
     os.replace(media, target)
-    _remove_if_empty(media.parent)
+    remove_if_empty(media.parent)
     return target
 
 
@@ -191,10 +191,10 @@ def remove_media(media_path: str, youtube_id: str) -> None:
     for path in sidecars(media):
         path.unlink(missing_ok=True)
     media.unlink(missing_ok=True)
-    _remove_if_empty(media.parent)
+    remove_if_empty(media.parent)
 
 
-def _remove_if_empty(directory: Path) -> None:
+def remove_if_empty(directory: Path) -> None:
     if directory != config.media_root and directory.is_relative_to(config.media_root):
         try:
             directory.rmdir()

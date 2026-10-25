@@ -12,12 +12,15 @@ import aiosqlite
 from app import layout
 from app.artwork import AVATAR_FILE, BANNER_FILE
 from app.config import config
-from app.db import Database, fetch_one, from_timestamp
-from app.jobs import JobRunner
+from app.db import Database, fetch_one, from_timestamp, loads
+from app.jobs import JobRunner, Refused
 from app.library import archive_facts, ensure_video, record_archived, save_video_info
 from app.youtube import Cancelled
 
 BATCH = 500
+# A rescan refuses to mark more than this many videos missing, or more than half the library,
+# unless forced.
+MISSING_LIMIT = 10
 
 
 def find_media(root: Path) -> tuple[dict[str, Path], int]:
@@ -76,6 +79,15 @@ async def run_scan(
     archived = await db.fetch_all(
         "SELECT id, youtube_id, media_path FROM videos WHERE media_path IS NOT NULL"
     )
+    force = (loads(job.get("options")) or {}).get("force")
+    missing = sum(1 for video in archived if video["youtube_id"] not in found)
+    if missing > max(MISSING_LIMIT, len(archived) // 2) and not force:
+        # An unmounted or mistyped media folder looks like a library whose files all vanished.
+        raise Refused(
+            f"Rescan stopped: {missing:,} of {len(archived):,} archived videos aren't in the "
+            f"media folder ({root}). Nothing was changed. If the folder is right and those files "
+            "really are gone, rescan anyway."
+        )
     linked: set[str] = set()
     for start in range(0, len(archived), BATCH):
         if cancel.is_set():

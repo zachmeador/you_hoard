@@ -50,6 +50,8 @@ Videos disappear from YouTube all the time: channels get deleted, uploads go pri
 **Run**
 - A live queue with progress, pause, cancel and retry. Failed downloads retry with backoff.
 - Your copy stays when a video leaves YouTube, and the library can filter for videos known to be gone.
+- Removed files go to a trash for 30 days, and you can restore them from the video's page. Turn the trash off in **System** to delete right away.
+- A rescan refuses to mark most of the library missing, so an unmounted or mistyped media folder can't scramble it.
 - Command-line tools for rescans, online database backups and password resets.
 
 ## Quick start
@@ -115,7 +117,9 @@ media/
 │   ├── 2019-06-14 Shopping mall walkthrough, 1991 (VHS) [aB3dE5fG7hJ].info.json
 │   ├── 2019-06-14 Shopping mall walkthrough, 1991 (VHS) [aB3dE5fG7hJ].jpg
 │   └── 2019-06-14 Shopping mall walkthrough, 1991 (VHS) [aB3dE5fG7hJ].en.vtt
-└── .youhoard/incomplete/      downloads in progress
+└── .youhoard/
+    ├── incomplete/            downloads in progress
+    └── trash/                 removed videos, until they expire
 ```
 
 - The `[id]` suffixes follow yt-dlp's convention, so other tools can match files to YouTube.
@@ -169,7 +173,7 @@ docker compose exec youhoard python -m app backup /data/backup.db   # copy the d
 docker compose exec youhoard python -m app reset-password <user>    # set a new password
 ```
 
-When running from source, use `uv run python -m app …` instead.
+When running from source, use `uv run python -m app …` instead. A rescan that would mark most of the library missing stops without changing anything; add `--force` if those files really are gone.
 
 ## Security
 

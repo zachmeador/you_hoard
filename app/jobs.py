@@ -11,6 +11,7 @@ from typing import Any
 
 import aiosqlite
 
+from app import trash
 from app.db import Database, dumps, fetch_one, from_timestamp, later, loads, now
 from app.settings import Settings
 from app.youtube import Blocked, Cancelled, NotReady, YouTube, YouTubeError
@@ -19,8 +20,13 @@ logger = logging.getLogger(__name__)
 
 MAX_DOWNLOAD_WORKERS = 8
 RETRY_DELAYS = (15 * 60, 60 * 60, 4 * 60 * 60)
+TRASH_PURGE_SECONDS = 3600
 ACTIVE = ("queued", "paused", "running")
 Handler = Callable[["JobRunner", dict[str, Any], threading.Event], Awaitable[dict[str, Any]]]
+
+
+class Refused(Exception):
+    """A job that declined to run; it fails with this message and isn't retried."""
 
 
 @dataclass
@@ -201,9 +207,14 @@ class JobRunner:
                 await self._idle()
 
     async def _scheduler(self) -> None:
+        purged_at = 0.0
         while not self._stopping:
             try:
                 await self.queue_due_checks()
+                if time.monotonic() - purged_at >= TRASH_PURGE_SECONDS:
+                    purged_at = time.monotonic()
+                    if deleted := await asyncio.to_thread(trash.purge):
+                        logger.info("Deleted %s expired trash entries", deleted)
             except Exception:
                 logger.exception("Scheduler error")
             await self._idle(30)
@@ -255,6 +266,9 @@ class JobRunner:
         except YouTubeError as error:
             retryable = type(error) is YouTubeError or isinstance(error, Blocked)
             await self._fail_or_retry(job, error, retryable)
+        except Refused as error:
+            logger.warning("Job %s refused: %s", job["id"], error)
+            await self._fail_or_retry(job, error, retryable=False)
         except Exception as error:
             logger.exception("Job %s failed", job["id"])
             await self._fail_or_retry(job, error, retryable=False)

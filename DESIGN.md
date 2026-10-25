@@ -32,6 +32,7 @@ Run one process. On shutdown, running downloads are aborted at the next progress
     <YYYY-MM-DD> <Title> [<video id>].en.vtt       # one per saved subtitle language
     <YYYY-MM-DD> <Title> [<video id>].live_chat.json   # stream chat replay, when kept
   .youhoard/incomplete/<video id>/                 # in-progress downloads
+  .youhoard/trash/<removed at> <video id>/         # removed files and trashed.json, until they expire
 ```
 
 - The `[id]` suffix is yt-dlp's convention; TubeArchivist's import and Jellyfin's YouTube metadata plugin key on it.
@@ -39,6 +40,8 @@ Run one process. On shutdown, running downloads are aborted at the next progress
 - Sidecars share the media file's basename, so `videos.media_path` is the only path stored. Files imported from TubeArchivist in place (`<channel id>/<video id>.mp4`, `<video id>.en.vtt`) follow the same rule.
 - Downloads complete in `.youhoard/incomplete` and are moved into place on the same filesystem, so media servers never see partial files.
 - Every served or removed path is resolved inside `MEDIA_DIR`.
+- Removing a video's files moves the media and its sidecars into a trash entry (`app/trash.py`), with a `trashed.json` manifest of where they came from and when they expire (`trash_days`, default 30; 0 deletes right away). A restore moves them back and refuses to overwrite anything. The scheduler deletes expired entries hourly, touching only the files an entry's manifest names. Rescans skip hidden folders, so they never pick files out of the trash.
+- Nothing deletes a folder that still has files in it: emptied folders are removed with `rmdir`, and the only recursive delete is a download's own `.youhoard/incomplete/<video id>` folder.
 - The `.info.json` holds:
   - yt-dlp's metadata without expiring URLs or format tables;
   - chapters, the most-replayed `heatmap`, and `comments` when kept;
@@ -56,7 +59,7 @@ Migrations live in `app/migrations/NNN_name.sql` and are tracked with `PRAGMA us
 | `subscriptions` | A followed channel or playlist with its `download_policy`, content types (channel tabs), download-option overrides (null means the library default) and `next_check_at`. |
 | `source_entries` | Inventory: every video a subscription's source has listed, with position, `baseline` flag, `removed_at`, view count and uploader. Joined to `videos` by YouTube ID. |
 | `jobs` | `download` and `check` (and `scan`) work. Partial unique indexes allow one active job per video or subscription. `options` is input, `result` output. `run_after` defers premieres and retry backoff. |
-| `settings` | Runtime settings as JSON values: library download defaults (quality, subtitle languages, auto captions, comments, audio languages, live chat, SponsorBlock), concurrency, default check interval. |
+| `settings` | Runtime settings as JSON values: library download defaults (quality, subtitle languages, auto captions, comments, audio languages, live chat, SponsorBlock), concurrency, default check interval, days removed files stay in the trash. |
 | `users`, `sessions` | One account; sessions store a SHA-256 of the token. |
 
 A video's status is derived (`app/library.py`): `archived` (has a file) → `downloading` / `queued` (latest download job) → `deleted` → `failed` → `missing` (known, not archived, nothing pending).
@@ -113,11 +116,11 @@ JSON under `/api`; the OpenAPI schema is at `/docs`. Auth is an HttpOnly session
 | Prefix | Endpoints |
 | --- | --- |
 | `/api/auth` | `status`, `setup`, `login`, `logout` |
-| `/api/videos` | list/filter/sort, `counts`, get (with chapters, heatmap, SponsorBlock segments, subtitles, files), `resolve` and add by URL, download with per-video options, delete local files, watched, `media` (range requests), `thumbnail`, `subtitles/{lang}`, `comments`, `chat` |
+| `/api/videos` | list/filter/sort, `counts`, get (with chapters, heatmap, SponsorBlock segments, subtitles, files), `resolve` and add by URL, download with per-video options, remove local files (into the trash) and `restore` them, watched, `media` (range requests), `thumbnail`, `subtitles/{lang}`, `comments`, `chat` |
 | `/api/channels` | list with counts and sorting, get, `avatar`, `banner` |
 | `/api/subscriptions` | `resolve`, create, list, get, update, delete, `check`, `entries`, download one entry |
 | `/api/jobs` | list with live progress, cancel, retry, pause, resume, remove, clear finished, retry failed |
-| `/api/settings`, `/api/system`, `/api/library/rescan` | runtime settings, versions/disk/library stats, rescan |
+| `/api/settings`, `/api/system`, `/api/library/rescan` | runtime settings, versions/disk/library/trash stats, rescan (`force` skips the missing-files check) |
 
 ## Frontend
 
@@ -142,6 +145,8 @@ Environment variables (or `.env`): `DATA_DIR` (database, logs), `MEDIA_DIR` (lib
 ## Command line
 
 `python -m app` (`app/__main__.py`): `import-tubearchivist`, `rescan` (the same job as the UI button), `backup <path>` (SQLite online backup, safe while running) and `reset-password <user>`.
+
+A rescan refuses to run when it would mark more than half of the archived videos missing (and more than 10), since an unmounted or mistyped media folder looks exactly like that. It fails with the counts and changes nothing; the UI's "Rescan anyway" or `rescan --force` overrides it.
 
 ## Packaging
 

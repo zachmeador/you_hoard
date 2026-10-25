@@ -112,6 +112,8 @@ export interface VideoDetail extends Video {
   files?: VideoFile[] | null
   comments?: { saved: number; url: string } | null
   chat_url?: string | null
+  /** Set while a removed video's files are in the trash and can be restored. */
+  trash?: { removed_at: string; expires_at: string } | null
 }
 
 export interface VideoQuery {
@@ -363,6 +365,7 @@ export interface Language {
 export interface SettingsOptions {
   qualities: string[]
   check_intervals: number[]
+  trash_days: number[]
   policies: DownloadPolicy[]
   content_types: VideoType[]
   languages: Language[]
@@ -378,6 +381,8 @@ export interface Settings {
   auto_captions: boolean
   live_chat: boolean
   sponsorblock: boolean
+  /** Days removed files stay in the trash; 0 deletes them right away. */
+  trash_days: number
   options: SettingsOptions
 }
 
@@ -400,4 +405,5 @@ export interface SystemInfo {
     unavailable: number
   }
   queue: { queued: number; running: number; failed: number }
+  trash: { videos: number; size: number }
 }

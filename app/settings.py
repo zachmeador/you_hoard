@@ -14,6 +14,8 @@ DEFAULTS: dict[str, Any] = {
     "sponsorblock": False,
     "max_concurrent_downloads": 2,
     "check_interval_hours": 6,
+    # Days removed files stay in the trash; 0 deletes them right away.
+    "trash_days": 30,
 }
 
 

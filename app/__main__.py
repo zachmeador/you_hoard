@@ -11,8 +11,8 @@ from pathlib import Path
 from app import tubearchivist
 from app.auth import hash_password
 from app.config import apply_umask, config
-from app.db import Database
-from app.jobs import JobRunner
+from app.db import Database, dumps
+from app.jobs import JobRunner, Refused
 from app.scanner import run_scan
 from app.settings import Settings
 from app.youtube import YouTube
@@ -20,7 +20,12 @@ from app.youtube import YouTube
 
 async def rescan(args: argparse.Namespace, db: Database) -> int:
     runner = JobRunner(db, YouTube(), Settings(db))
-    result = await run_scan(runner, {"id": 0}, threading.Event())
+    job = {"id": 0, "options": dumps({"force": args.force})}
+    try:
+        result = await run_scan(runner, job, threading.Event())
+    except Refused as error:
+        print(f"{error} (Run it again with --force.)", file=sys.stderr)
+        return 1
     for key, value in result.items():
         print(f"{key}: {value}")
     return 0
@@ -69,9 +74,13 @@ async def import_tubearchivist(args: argparse.Namespace, db: Database) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m app", description="YouHoard maintenance")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("rescan", help="Reconcile the database with the media folder").set_defaults(
-        func=rescan
+    scan = commands.add_parser("rescan", help="Reconcile the database with the media folder")
+    scan.add_argument(
+        "--force",
+        action="store_true",
+        help="mark videos missing even when most of the library seems gone",
     )
+    scan.set_defaults(func=rescan)
     copy = commands.add_parser("backup", help="Copy the database safely while the app runs")
     copy.add_argument("path")
     copy.set_defaults(func=backup)

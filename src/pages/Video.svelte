@@ -21,6 +21,7 @@
   import { Loader } from '../lib/loader.svelte.js'
   import { queue } from '../lib/queue.svelte.js'
   import { href } from '../lib/router.svelte.js'
+  import { librarySettings } from '../lib/settings.svelte.js'
   import { system } from '../lib/system.svelte.js'
   import { videoState } from '../lib/status.js'
   import { notify } from '../lib/toasts.svelte.js'
@@ -154,18 +155,41 @@
   async function removeFiles() {
     if (!video) return
     const target = video
-    const ok = await confirmAction({
-      title: 'Remove local files?',
-      message:
-        `This deletes the downloaded files for “${target.title}”. The video stays in your library as ` +
-        "removed, so subscriptions won't fetch it again. You can download it again later.",
-      confirmLabel: 'Remove files',
-      danger: true
-    })
+    const days = librarySettings.current?.trash_days ?? 0
+    const ok = await confirmAction(
+      days > 0
+        ? {
+            title: 'Move to the trash?',
+            message:
+              `The downloaded files for “${target.title}” move to the trash. You can restore them from this ` +
+              `page for ${days} days; after that they're deleted for good. Subscriptions won't fetch the video again.`,
+            confirmLabel: 'Move to the trash',
+            danger: true
+          }
+        : {
+            title: 'Delete local files?',
+            message:
+              `This deletes the downloaded files for “${target.title}” for good, because the trash is off in ` +
+              "System. The video stays in your library as removed, so subscriptions won't fetch it again.",
+            confirmLabel: 'Delete files',
+            danger: true
+          }
+    )
     if (!ok) return
     await run('remove', async () => {
-      await api.videos.removeFiles(target.id)
-      notify.success('Local files removed')
+      const res = await api.videos.removeFiles(target.id)
+      notify.success(res.trash ? 'Moved to the trash' : 'Local files deleted')
+      await reload()
+      channelsChanged()
+    })
+  }
+
+  function restoreFiles() {
+    if (!video) return
+    const target = video
+    return run('restore', async () => {
+      await api.videos.restore(target.id)
+      notify.success('Files restored')
       await reload()
       channelsChanged()
     })
@@ -284,7 +308,17 @@
       {:else if phase.key === 'deleted'}
         <div class="callout">
           <span class="st deleted mk" aria-hidden="true"></span>
-          <div><span class="ttl2">Local files removed on {dmy(video.deleted_at)}</span></div>
+          <div>
+            <span class="ttl2">Local files removed on {dmy(video.deleted_at)}</span>
+            {#if video.trash}
+              In the trash until {dmy(video.trash.expires_at)}, then deleted for good.
+              <div class="acts">
+                <button type="button" class="btn" disabled={busy === 'restore'} onclick={restoreFiles}>
+                  <Icon name="retry" />Restore files
+                </button>
+              </div>
+            {/if}
+          </div>
         </div>
       {:else if phase.key === 'waiting' && job}
         <div class="callout">

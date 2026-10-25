@@ -35,5 +35,6 @@ cookies.txt
 # Claude Code local state
 .claude/
 
-# Personal notes that never get committed
+# Personal notes and local data that never get committed
 /.private/
+/.local/

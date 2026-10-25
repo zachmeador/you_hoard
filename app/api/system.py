@@ -10,7 +10,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 
-from app import __version__
+from app import __version__, trash
 from app.api.deps import clean_languages, get_db, get_runner, get_settings, get_youtube
 from app.config import config
 from app.db import Database, now
@@ -21,6 +21,7 @@ from app.youtube import QUALITIES, YouTube
 
 router = APIRouter()
 CHECK_INTERVALS = [1, 3, 6, 12, 24, 72, 168]
+TRASH_DAYS = [0, 7, 30, 90]
 
 
 class SettingsUpdate(BaseModel):
@@ -33,6 +34,7 @@ class SettingsUpdate(BaseModel):
     sponsorblock: bool | None = None
     max_concurrent_downloads: int | None = Field(None, ge=1, le=8)
     check_interval_hours: int | None = Field(None, ge=1, le=720)
+    trash_days: int | None = Field(None, ge=0, le=365)
 
     @field_validator("subtitle_languages", "audio_languages")
     @classmethod
@@ -46,6 +48,7 @@ async def settings_out(settings: Settings) -> dict:
         "options": {
             "qualities": QUALITIES,
             "check_intervals": CHECK_INTERVALS,
+            "trash_days": TRASH_DAYS,
             "policies": ["none", "new", "recent", "all"],
             "content_types": ["video", "short", "live"],
             "languages": language_options(),
@@ -121,9 +124,16 @@ async def system_status(db: Database = Depends(get_db), youtube: YouTube = Depen
         "disk": disk,
         "library": library,
         "queue": queue,
+        "trash": await asyncio.to_thread(trash.summary),
     }
 
 
+class Rescan(BaseModel):
+    # Skip the check that stops a rescan from marking most of the library missing.
+    force: bool = False
+
+
 @router.post("/library/rescan", status_code=202)
-async def rescan_library(runner: JobRunner = Depends(get_runner)):
-    return {"job_id": await runner.enqueue("scan", priority=1)}
+async def rescan_library(body: Rescan | None = None, runner: JobRunner = Depends(get_runner)):
+    options = {"force": True} if body and body.force else None
+    return {"job_id": await runner.enqueue("scan", options=options, priority=1)}

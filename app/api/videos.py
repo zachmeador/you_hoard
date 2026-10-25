@@ -10,20 +10,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
-from app import layout, sidecar
+from app import layout, sidecar, trash
 from app.api.deps import (
     clean_languages,
     get_db,
     get_runner,
+    get_settings,
     get_youtube,
     load_video,
     not_found,
     video_out,
 )
-from app.db import Database, loads, now
+from app.db import Database, from_timestamp, loads, now
 from app.jobs import JobRunner
 from app.languages import language_name
-from app.library import VIDEO_SELECT, published_at, save_video_info
+from app.library import VIDEO_SELECT, archive_facts, published_at, record_archived, save_video_info
+from app.settings import Settings
 from app.tracks import AUTO, TRANSLATED, UPLOADED
 from app.youtube import (
     QUALITIES,
@@ -248,7 +250,16 @@ async def get_video(video_id: int, db: Database = Depends(get_db)):
             media = layout.media_file(row["media_path"], row["youtube_id"])
         except layout.PathError:
             pass
-    return {**video_out(row), **await asyncio.to_thread(video_details, row, media)}
+    entry = None
+    if row["deleted_at"] and not row["media_path"]:
+        entry = await asyncio.to_thread(trash.latest, row["youtube_id"])
+    return {
+        **video_out(row),
+        **await asyncio.to_thread(video_details, row, media),
+        "trash": {"removed_at": entry.removed_at, "expires_at": entry.expires_at}
+        if entry
+        else None,
+    }
 
 
 @router.post("/resolve")
@@ -341,14 +352,30 @@ async def download_video(
 
 
 @router.delete("/{video_id}")
-async def delete_video(video_id: int, db: Database = Depends(get_db)):
+async def delete_video(
+    video_id: int, db: Database = Depends(get_db), settings: Settings = Depends(get_settings)
+):
+    """Remove a video's local files: into the trash, or for good when trash_days is 0."""
     video = await load_video(db, video_id)
     if video["status"] in ("queued", "downloading"):
         raise HTTPException(status_code=409, detail="Cancel the download in the queue first")
+    entry = None
     if video["media_path"]:
+        days = await settings.get("trash_days")
         try:
-            await asyncio.to_thread(layout.remove_media, video["media_path"], video["youtube_id"])
-        except layout.PathError as error:
+            if days > 0:
+                entry = await asyncio.to_thread(
+                    trash.move_to_trash,
+                    video["media_path"],
+                    video["youtube_id"],
+                    video["title"],
+                    days,
+                )
+            else:
+                await asyncio.to_thread(
+                    layout.remove_media, video["media_path"], video["youtube_id"]
+                )
+        except (layout.PathError, trash.TrashError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
     await asyncio.to_thread(shutil.rmtree, layout.incomplete_dir(video["youtube_id"]), True)
     await db.execute(
@@ -357,6 +384,37 @@ async def delete_video(video_id: int, db: Database = Depends(get_db)):
         "subtitle_tracks = NULL, deleted_at = ?, updated_at = ? WHERE id = ?",
         (now(), now(), video_id),
     )
+    return {"ok": True, "trash": {"expires_at": entry.expires_at} if entry else None}
+
+
+@router.post("/{video_id}/restore")
+async def restore_video(video_id: int, db: Database = Depends(get_db)):
+    """Move a removed video's files back from the trash."""
+    video = await load_video(db, video_id)
+    if video["media_path"]:
+        raise HTTPException(status_code=409, detail="This video already has its files")
+    entry = await asyncio.to_thread(trash.latest, video["youtube_id"])
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Nothing in the trash for this video")
+    try:
+        media = await asyncio.to_thread(trash.restore, entry)
+    except (layout.PathError, trash.TrashError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    info = await asyncio.to_thread(sidecar.read_info, media)
+    stat = await asyncio.to_thread(media.stat)
+    async with db.transaction() as conn:
+        if info.get("id") == video["youtube_id"]:
+            await save_video_info(conn, info)
+        await record_archived(
+            conn,
+            video_id,
+            layout.relative(media),
+            stat.st_size,
+            info.get("width"),
+            info.get("height"),
+            archived_at=video["archived_at"] or from_timestamp(stat.st_mtime),
+            facts=archive_facts(info) if info else None,
+        )
     return {"ok": True}
 
 

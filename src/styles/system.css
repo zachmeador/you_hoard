@@ -286,3 +286,7 @@
   line-height: 1.5;
   max-width: 68ch;
 }
+
+.trash-line {
+  margin-top: 12px;
+}

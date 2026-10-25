@@ -153,10 +153,17 @@ export const api = {
      */
     resolve: (url) => request('POST', '/videos/resolve', { url }),
     /**
+     * Into the trash, or deleted for good when the trash is off.
+     * @param {number} id
+     * @returns {Promise<{ ok: boolean, trash: { expires_at: string } | null }>}
+     */
+    removeFiles: (id) => request('DELETE', `/videos/${id}`),
+    /**
+     * Move a removed video's files back from the trash.
      * @param {number} id
      * @returns {Promise<{ ok: boolean }>}
      */
-    removeFiles: (id) => request('DELETE', `/videos/${id}`),
+    restore: (id) => request('POST', `/videos/${id}/restore`),
     /**
      * @param {number} id
      * @param {boolean} watched
@@ -265,7 +272,10 @@ export const api = {
   system: {
     /** @returns {Promise<T.SystemInfo>} */
     get: () => request('GET', '/system'),
-    /** @returns {Promise<{ job_id: number }>} */
-    rescan: () => request('POST', '/library/rescan')
+    /**
+     * @param {boolean} [force] mark videos missing even when most of the library seems gone
+     * @returns {Promise<{ job_id: number }>}
+     */
+    rescan: (force = false) => request('POST', '/library/rescan', force ? { force } : undefined)
   }
 }

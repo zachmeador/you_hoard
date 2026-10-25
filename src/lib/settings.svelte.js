@@ -5,6 +5,7 @@ import { api } from './api.js'
 export const DEFAULT_OPTIONS = {
   qualities: ['best', '2160p', '1440p', '1080p', '720p', '480p', '360p'],
   check_intervals: [1, 3, 6, 12, 24, 72, 168],
+  trash_days: [0, 7, 30, 90],
   policies: ['none', 'new', 'recent', 'all'],
   content_types: ['video', 'short', 'live'],
   languages: []

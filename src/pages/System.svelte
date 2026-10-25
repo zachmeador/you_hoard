@@ -3,6 +3,7 @@
   import { onMount, untrack } from 'svelte'
   import { api } from '../lib/api.js'
   import { copyText } from '../lib/clipboard.js'
+  import { confirmAction } from '../lib/confirm.svelte.js'
   import { bytes, int, interval, parseTime, qualityLabel, rel } from '../lib/format.js'
   import { jobResult } from '../lib/jobs.js'
   import { Loader } from '../lib/loader.svelte.js'
@@ -33,7 +34,16 @@
   const dirty = $derived(JSON.stringify(form) !== JSON.stringify(saved))
   const options = $derived(librarySettings.options)
   const intervals = $derived(options.check_intervals.map((h) => ({ value: h, label: interval(h) })))
-  const lastScan = $derived(scans.data?.items[0])
+  const trashChoices = $derived.by(() =>
+    [...new Set([...options.trash_days, form?.trash_days ?? 0])]
+      .sort((a, b) => a - b)
+      .map((days) => ({ value: days, label: days > 0 ? `Keep ${days} ${days === 1 ? 'day' : 'days'} in the trash` : 'Delete right away' }))
+  )
+  // The newest scan job, whatever its status (the list sorts by status first).
+  const lastScan = $derived(
+    (scans.data?.items ?? []).reduce((/** @type {Job | null} */ newest, job) => (!newest || job.id > newest.id ? job : newest), null)
+  )
+  const refused = $derived(lastScan?.status === 'failed' && /^Rescan stopped/.test(lastScan.error ?? ''))
   const used = $derived(info?.disk ? Math.round((info.disk.used / info.disk.total) * 100) : 0)
   const ageDays = $derived.by(() => {
     const m = /^(\d{4})\.(\d{1,2})\.(\d{1,2})/.exec(info?.yt_dlp ?? '')
@@ -60,7 +70,7 @@
     librarySettings.load().catch((e) => notify.error(e))
     system.refresh().catch(() => {})
     largest.run(() => api.channels.list({ sort: 'size', per_page: 8 }))
-    scans.run(() => api.jobs.list({ kind: 'scan', status: 'completed', limit: 1 }))
+    loadScans()
     api.jobs
       .list({ kind: 'download', status: 'failed', limit: 200 })
       .then((res) => {
@@ -68,8 +78,17 @@
         botChecks = res.items.filter((j) => /bot/i.test(j.error ?? '') && (parseTime(j.finished_at)?.getTime() ?? 0) > since).length
       })
       .catch(() => {})
-    return poll(() => system.refresh(), 15_000, { immediate: false })
+    return poll(
+      async () => {
+        await system.refresh()
+        loadScans()
+      },
+      15_000,
+      { immediate: false }
+    )
   })
+
+  const loadScans = () => scans.run(() => api.jobs.list({ kind: 'scan', limit: 20 }), { quiet: !!scans.data })
 
   async function save() {
     if (!form) return
@@ -95,10 +114,23 @@
     if (form) form.max_concurrent_downloads = Math.min(8, Math.max(1, form.max_concurrent_downloads + step))
   }
 
-  async function rescan() {
+  /** @param {boolean} [force] */
+  async function rescan(force = false) {
+    if (force) {
+      const ok = await confirmAction({
+        title: 'Rescan anyway?',
+        message:
+          "Videos whose files aren't in the media folder get marked missing. No files are deleted, and a later " +
+          'rescan links anything that comes back.',
+        confirmLabel: 'Rescan anyway',
+        danger: true
+      })
+      if (!ok) return
+    }
     try {
-      const { job_id } = await api.system.rescan()
+      const { job_id } = await api.system.rescan(force)
       notify.success(`Library rescan queued (job #${job_id})`)
+      loadScans()
     } catch (e) {
       notify.error(e)
     }
@@ -122,7 +154,7 @@
 <div class="sys">
   <div>
     <section aria-labelledby="def-h">
-      <h2 class="label" id="def-h">Download defaults</h2>
+      <h2 class="label" id="def-h">Settings</h2>
       {#if form}
         {@const f = form}
         <form
@@ -185,6 +217,15 @@
                 <span class="hint">Applies immediately</span>
               </div>
             </div>
+            <FieldSelect
+              label="Removed files"
+              value={f.trash_days}
+              options={trashChoices}
+              hint="Restorable from the video's page until then"
+              onchange={(value) => {
+                f.trash_days = Number(value)
+              }}
+            />
           </div>
           <div class="toggles">
             <div class="toggle-row">
@@ -216,10 +257,17 @@
       <h2 class="label" id="scan-h">
         Library rescan
         <span class="r">
-          <button type="button" class="btn sm" onclick={rescan}><Icon name="refresh" />Rescan now</button>
+          <button type="button" class="btn sm" onclick={() => rescan()}><Icon name="refresh" />Rescan now</button>
         </span>
       </h2>
-      {#if lastScan}
+      {#if lastScan?.status === 'queued' || lastScan?.status === 'running'}
+        <p class="p">Rescanning…</p>
+      {:else if lastScan?.status === 'failed'}
+        <p class="p">{rel(lastScan.finished_at, clock.now)}: {lastScan.error}</p>
+        {#if refused}
+          <button type="button" class="btn danger sm" onclick={() => rescan(true)}>Rescan anyway</button>
+        {/if}
+      {:else if lastScan}
         <p class="p">Last run {rel(lastScan.finished_at, clock.now)}: {jobResult(lastScan)}</p>
       {/if}
     </section>
@@ -319,6 +367,11 @@
           </div>
         {:else}
           <p class="p">Disk usage is unavailable for the media folder.</p>
+        {/if}
+        {#if info.trash.videos > 0}
+          <p class="p trash-line">
+            {int(info.trash.videos)} removed {info.trash.videos === 1 ? 'video' : 'videos'} in the trash, {bytes(info.trash.size)}
+          </p>
         {/if}
       </section>
 
