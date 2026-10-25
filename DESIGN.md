@@ -150,6 +150,6 @@ A rescan refuses to run when it would mark more than half of the archived videos
 
 ## Packaging
 
-`Dockerfile` builds the frontend, then a Python image with ffmpeg and the locked dependencies (including Deno), with `/data` and `/media` volumes. It runs as UID 1000 by default and works as any user (Compose `user:`): caches live in `/tmp`, and the virtualenv is writable so `YTDLP_UPDATE_ON_START=1` can upgrade yt-dlp at start. The code is copied last, so an update only rebuilds and pulls small layers.
+`Dockerfile` builds the frontend, then a Python image with ffmpeg and the locked dependencies (including Deno), with `/data` and `/media` volumes. It runs as UID 1000 by default and works as any user (Compose `user:`): caches live in `/tmp`, and the virtualenv is writable so `YTDLP_UPDATE_ON_START=1` can upgrade yt-dlp at start. The code is copied last, so an update only rebuilds and pulls small layers. `compose.tailscale.yaml` runs it behind a Tailscale container for HTTPS on a tailnet: YouHoard shares that container's network, listens only on localhost, and Tailscale Serve proxies `https://youhoard.<tailnet>.ts.net` to it.
 
 CI runs lint, tests and the frontend check/build, then builds the image and smoke-tests it as 99:100 with `UMASK=002`. Pushes to `main` publish it to `ghcr.io/zachmeador/you_hoard` as `:main` and `:sha-<commit>`. Dependabot bumps the lockfile weekly.

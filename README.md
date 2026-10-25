@@ -175,9 +175,25 @@ docker compose exec youhoard python -m app reset-password <user>    # set a new 
 
 When running from source, use `uv run python -m app …` instead. A rescan that would mark most of the library missing stops without changing anything; add `--force` if those files really are gone.
 
+## HTTPS
+
+YouHoard speaks plain HTTP and leaves certificates to whatever sits in front of it.
+
+**With Tailscale**, [`compose.tailscale.yaml`](compose.tailscale.yaml) runs YouHoard next to a Tailscale container. It gets its own address on your tailnet, `https://youhoard.<your-tailnet>.ts.net`, with a certificate Tailscale renews for you, and no ports open on the host.
+
+1. In the [Tailscale admin console](https://login.tailscale.com/admin), turn on MagicDNS and HTTPS certificates on the DNS page, then generate an auth key under Settings → Keys.
+2. Save it in a `.env` file next to the compose file: `TS_AUTHKEY=tskey-auth-…`.
+3. Set the media mount and `user:` as in the quick start, then run `docker compose -f compose.tailscale.yaml up -d`.
+
+The first visit can take a few seconds while the certificate is issued. In the admin console, turn off key expiry for the new `youhoard` machine, or it drops off your tailnet after six months.
+
+Even without HTTPS, Tailscale encrypts everything between your devices, so plain `http://` over a tailnet is still private. HTTPS adds the padlock and the browser features that need it.
+
+**With your own reverse proxy** (Caddy, Nginx Proxy Manager, Traefik), point it at port 8000 and pass `X-Forwarded-Proto` and `X-Forwarded-Host`. YouHoard uses them to mark its login cookie secure and to check that changes come from its own pages. Tailscale's proxy sends both already.
+
 ## Security
 
-YouHoard has a single account and is meant for a trusted network: your LAN, a VPN or a tailnet. It hasn't been hardened for the open internet. Behind a TLS-terminating reverse proxy, pass `X-Forwarded-Proto` and `X-Forwarded-Host`, so login cookies are marked secure and same-origin checks see the right host.
+YouHoard has a single account and is meant for a trusted network: your LAN, a VPN or a tailnet. It hasn't been hardened for the open internet.
 
 ## How it works
 

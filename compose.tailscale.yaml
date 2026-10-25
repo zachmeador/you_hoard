@@ -1,0 +1,60 @@
+# YouHoard on your tailnet at https://youhoard.<your-tailnet>.ts.net, with no ports opened on
+# the host. A Tailscale container joins the tailnet as "youhoard" and serves HTTPS with a
+# certificate Tailscale issues and renews; YouHoard shares its network and listens only on
+# localhost, so the tailnet address is the only way in.
+#
+# Put TS_AUTHKEY=tskey-auth-… in a .env file next to this one, then:
+#   docker compose -f compose.tailscale.yaml up -d
+# See "HTTPS" in the README for the admin console steps. Needs Docker Compose 2.23 or newer,
+# for the inline serve config at the bottom.
+
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    hostname: youhoard
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?Put TS_AUTHKEY in .env}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "false"
+    configs:
+      - source: serve
+        target: /config/serve.json
+    volumes:
+      - ./tailscale:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+
+  youhoard:
+    image: ghcr.io/zachmeador/you_hoard:main
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    command: ["uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000"]
+    # Run as the user that owns your media files, so downloads, removals and
+    # --organize can write there.
+    user: "1000:1000"
+    environment:
+      YTDLP_UPDATE_ON_START: "1"
+      # UMASK: "002"   # keep new files group-writable, e.g. on a NAS share
+    volumes:
+      - ./data:/data
+      - /path/to/media:/media
+    stop_grace_period: 30s
+
+configs:
+  serve:
+    # Tailscale fills in ${TS_CERT_DOMAIN}; the doubled $ stops Compose from doing it first.
+    content: |
+      {
+        "TCP": {"443": {"HTTPS": true}},
+        "Web": {
+          "$${TS_CERT_DOMAIN}:443": {
+            "Handlers": {"/": {"Proxy": "http://127.0.0.1:8000"}}
+          }
+        }
+      }
