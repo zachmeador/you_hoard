@@ -26,7 +26,6 @@ INFO_DROP = {
     "automatic_captions",
     "subtitles",
     "thumbnails",
-    "heatmap",
     "http_headers",
     "url",
     "manifest_url",
