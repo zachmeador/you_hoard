@@ -10,10 +10,11 @@ from typing import Any
 import aiosqlite
 
 from app import layout
+from app.artwork import AVATAR_FILE, BANNER_FILE
 from app.config import config
-from app.db import fetch_one, from_timestamp
+from app.db import Database, fetch_one, from_timestamp
 from app.jobs import JobRunner
-from app.library import ensure_video, record_archived, save_video_info
+from app.library import archive_facts, ensure_video, record_archived, save_video_info
 from app.youtube import Cancelled
 
 BATCH = 500
@@ -137,9 +138,31 @@ async def run_scan(
                         (info or {}).get("width"),
                         (info or {}).get("height"),
                         archived_at=from_timestamp(stat.st_mtime),
+                        facts=archive_facts(info) if info else None,
                     )
                     result["added"] += 1
+    await link_channel_art(db)
     return result
+
+
+async def link_channel_art(db: Database) -> None:
+    """Point channels at the avatar and banner files in their folders."""
+    folders = await asyncio.to_thread(layout.channel_folders)
+    for channel in await db.fetch_all(
+        "SELECT id, youtube_id, avatar_path, banner_path FROM channels"
+    ):
+        folder = folders.get(channel["youtube_id"])
+        paths = {}
+        for column, filename in (("avatar_path", AVATAR_FILE), ("banner_path", BANNER_FILE)):
+            path = folder / filename if folder else None
+            found = layout.relative(path) if path and path.is_file() else None
+            if found != channel[column]:
+                paths[column] = found
+        if paths:
+            assignments = ", ".join(f"{column} = ?" for column in paths)
+            await db.execute(
+                f"UPDATE channels SET {assignments} WHERE id = ?", (*paths.values(), channel["id"])
+            )
 
 
 def _read_info(media: Path) -> dict[str, Any] | None:

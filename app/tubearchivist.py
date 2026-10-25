@@ -93,8 +93,9 @@ UNRECOGNIZED_NAME = (
 EXTRA_COPY = "extra copies of videos that already have a file (left alone)"
 SYMLINK = "symbolic links to video files (not imported; YouHoard needs the files themselves)"
 TAKEN = "videos whose new name is already taken, left in place"
-# Info keys about the channel, which save_video_info would otherwise write to the channel row.
-VIDEO_ONLY = {"channel", "uploader", "channel_follower_count"}
+# Info keys about the channel, which save_video_info would otherwise write to the channel row,
+# and TubeArchivist's `published`, which is a date rather than an upload time.
+VIDEO_ONLY = {"channel", "uploader", "channel_follower_count", "timestamp"}
 
 
 class ImportProblem(Exception):

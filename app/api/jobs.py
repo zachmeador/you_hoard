@@ -6,7 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_db, get_runner, not_found
-from app.db import Database, fetch_one, loads
+from app.db import Database, fetch_one, loads, now
 from app.jobs import JobRunner
 
 router = APIRouter()
@@ -77,9 +77,18 @@ async def list_jobs(
     rows = await db.fetch_all(
         f"{JOB_SELECT} {where} {ORDER} LIMIT ? OFFSET ?", [*params, limit, offset]
     )
-    counts = dict.fromkeys(("queued", "paused", "running", "completed", "failed", "cancelled"), 0)
-    for row in await db.fetch_all("SELECT status, count(*) AS n FROM jobs GROUP BY status"):
+    counts = dict.fromkeys(
+        ("queued", "waiting", "paused", "running", "completed", "failed", "cancelled"), 0
+    )
+    for row in await db.fetch_all(
+        "SELECT status, count(*) AS n, count(CASE WHEN run_after > ? THEN 1 END) AS later "
+        "FROM jobs GROUP BY status",
+        (now(),),
+    ):
         counts[row["status"]] = row["n"]
+        if row["status"] == "queued":
+            counts["waiting"] = row["later"]
+            counts["queued"] = row["n"] - row["later"]
     return {"items": [job_out(row, runner) for row in rows], "total": total, "counts": counts}
 
 

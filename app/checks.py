@@ -5,12 +5,28 @@ from typing import Any
 
 import aiosqlite
 
+from app.artwork import save_channel_art
 from app.db import dumps, fetch_all, fetch_one, loads, now
 from app.jobs import JobRunner
-from app.library import ensure_video
-from app.youtube import NOT_READY, Cancelled
+from app.library import ensure_video, upsert_channel
+from app.youtube import NOT_READY, Cancelled, Source
 
 ROUTINE_STOP_AFTER_KNOWN = 10
+
+
+async def refresh_channel(runner: JobRunner, channel_id: int, source: Source) -> None:
+    """Bring a channel's row up to date from a listing of its tab, and save its art."""
+    async with runner.db.transaction() as conn:
+        await upsert_channel(
+            conn,
+            source.youtube_id,
+            source.channel_name,
+            source.channel_handle,
+            source.description,
+            source.subscriber_count,
+            source.verified,
+        )
+    await save_channel_art(runner.db, runner.youtube, channel_id, source)
 
 
 async def run_check(
@@ -22,6 +38,7 @@ async def run_check(
     inventoried = set(loads(sub["inventoried_types"]))
     tabs = loads(sub["content_types"]) if sub["kind"] == "channel" else [None]
     result = {"listed": 0, "new_entries": 0, "removed": 0, "queued": 0, "full": False}
+    channel_refreshed = False
 
     for video_type in tabs:
         if cancel.is_set():
@@ -36,7 +53,7 @@ async def run_check(
                 (sub["id"], video_type),
             )
             known = {row["youtube_id"] for row in rows}
-        entries = await runner.youtube.list_entries(
+        listing = await runner.youtube.list_entries(
             sub["kind"],
             sub["youtube_id"],
             video_type,
@@ -44,6 +61,10 @@ async def run_check(
             stop_after_known=ROUTINE_STOP_AFTER_KNOWN,
             cancelled=cancel,
         )
+        entries = listing.entries
+        if listing.source and sub["channel_id"] and not channel_refreshed:
+            channel_refreshed = True
+            await refresh_channel(runner, sub["channel_id"], listing.source)
         stamp = now()
         async with db.transaction() as conn:
             for position, entry in enumerate(entries):
@@ -56,6 +77,9 @@ async def run_check(
                     await conn.execute(
                         """UPDATE source_entries SET title = coalesce(?, title),
                                duration = coalesce(?, duration), live_status = ?,
+                               channel_youtube_id = coalesce(?, channel_youtube_id),
+                               channel_name = coalesce(?, channel_name),
+                               view_count = coalesce(?, view_count),
                                last_seen_at = ?, removed_at = NULL,
                                position = CASE WHEN ? THEN ? ELSE position END
                            WHERE subscription_id = ? AND youtube_id = ?""",
@@ -63,6 +87,9 @@ async def run_check(
                             entry.title,
                             entry.duration,
                             entry.live_status,
+                            entry.channel_youtube_id,
+                            entry.channel_name,
+                            entry.view_count,
                             stamp,
                             sub["kind"] == "playlist",
                             position,
@@ -73,9 +100,10 @@ async def run_check(
                 else:
                     await conn.execute(
                         """INSERT INTO source_entries (subscription_id, youtube_id, video_type,
-                               title, duration, position, baseline, live_status, first_seen_at,
+                               title, duration, position, baseline, live_status,
+                               channel_youtube_id, channel_name, view_count, first_seen_at,
                                last_seen_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             sub["id"],
                             entry.youtube_id,
@@ -85,6 +113,9 @@ async def run_check(
                             position,
                             first and entry.live_status not in NOT_READY,
                             entry.live_status,
+                            entry.channel_youtube_id,
+                            entry.channel_name,
+                            entry.view_count,
                             stamp,
                             stamp,
                         ),
@@ -122,16 +153,15 @@ async def run_check(
     return result
 
 
-def subscription_download_options(sub: dict[str, Any]) -> dict[str, Any]:
-    """Per-subscription overrides; anything left out falls back to library settings."""
-    options = {
-        "quality": sub["quality"],
-        "subtitle_languages": loads(sub["subtitle_languages"]),
-        "download_comments": None
-        if sub["download_comments"] is None
-        else bool(sub["download_comments"]),
-    }
-    return {key: value for key, value in options.items() if value is not None}
+async def entry_channel(
+    conn: aiosqlite.Connection, sub: dict[str, Any], entry: dict[str, Any]
+) -> int | None:
+    """The channel a listed video belongs to: the channel's own, or a playlist entry's uploader."""
+    if sub["channel_id"]:
+        return sub["channel_id"]
+    if entry["channel_youtube_id"]:
+        return await upsert_channel(conn, entry["channel_youtube_id"], entry["channel_name"])
+    return None
 
 
 async def apply_policy(runner: JobRunner, conn: aiosqlite.Connection, subscription_id: int) -> int:
@@ -154,17 +184,18 @@ async def apply_policy(runner: JobRunner, conn: aiosqlite.Connection, subscripti
             ORDER BY e.baseline, e.position""",
         (subscription_id, *types, policy, policy, sub["recent_count"]),
     )
-    options = subscription_download_options(sub)
     for entry in entries:
         video_id = await ensure_video(
             conn,
             entry["youtube_id"],
             entry["title"],
             entry["video_type"],
-            channel_id=sub["channel_id"],
+            channel_id=await entry_channel(conn, sub, entry),
             duration=entry["duration"],
         )
-        await runner.enqueue("download", video_id=video_id, options=options, conn=conn)
+        await runner.enqueue(
+            "download", video_id=video_id, options={"subscription_id": sub["id"]}, conn=conn
+        )
     return len(entries)
 
 
@@ -172,19 +203,23 @@ async def queue_entry_download(
     runner: JobRunner, conn: aiosqlite.Connection, sub: dict[str, Any], entry: dict[str, Any]
 ) -> tuple[int, int]:
     """An explicit download of one inventory entry, regardless of policy."""
+    channel_id = await entry_channel(conn, sub, entry)
     video_id = await ensure_video(
         conn,
         entry["youtube_id"],
         entry["title"],
         entry["video_type"],
-        channel_id=sub["channel_id"],
+        channel_id=channel_id,
         duration=entry["duration"],
     )
-    await conn.execute("UPDATE videos SET deleted_at = NULL WHERE id = ?", (video_id,))
+    await conn.execute(
+        "UPDATE videos SET deleted_at = NULL, channel_id = coalesce(channel_id, ?) WHERE id = ?",
+        (channel_id, video_id),
+    )
     job_id = await runner.enqueue(
         "download",
         video_id=video_id,
-        options=subscription_download_options(sub),
+        options={"subscription_id": sub["id"]},
         priority=5,
         conn=conn,
     )

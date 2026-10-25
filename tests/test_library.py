@@ -38,7 +38,15 @@ def test_add_archives_into_readable_layout_with_sidecars(archive):
     info = json.loads(base.with_name(base.name + ".info.json").read_text())
     assert info["title"] == "Never: Gonna/Give You Up" and info["tags"] == ["music"]
     assert "formats" not in info  # signed URLs that expire are not kept
-    assert saved["subtitles"] == [{"lang": "en", "url": f"/api/videos/{video['id']}/subtitles/en"}]
+    assert "subtitles" not in info and "automatic_captions" not in info
+    assert saved["subtitles"] == [
+        {
+            "lang": "en",
+            "name": "English",
+            "source": "uploaded",
+            "url": f"/api/videos/{video['id']}/subtitles/en",
+        }
+    ]
     assert not (archive.media / ".youhoard" / "incomplete" / VIDEO).exists()
 
     request = archive.youtube.calls[-1][1]

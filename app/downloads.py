@@ -8,7 +8,8 @@ from typing import Any
 from app import layout
 from app.db import fetch_one, loads, now
 from app.jobs import JobRunner, Progress
-from app.library import record_archived, save_video_info, write_info_json
+from app.library import archive_facts, record_archived, save_video_info, write_info_json
+from app.options import resolve_options
 from app.youtube import Cancelled, DownloadRequest, Unavailable
 
 
@@ -19,20 +20,25 @@ async def run_download(
     video = await db.fetch_one("SELECT * FROM videos WHERE id = ?", (job["video_id"],))
     if video["media_path"]:
         return {"skipped": "Already archived"}
-    defaults = await runner.settings.all()
-    options = loads(job["options"]) or {}
-
-    def choose(key: str, default_key: str) -> Any:
-        value = options.get(key)
-        return defaults[default_key] if value is None else value
+    job_options = loads(job["options"]) or {}
+    subscription = None
+    if job_options.get("subscription_id"):
+        subscription = await db.fetch_one(
+            "SELECT * FROM subscriptions WHERE id = ?", (job_options["subscription_id"],)
+        )
+    options = resolve_options(job_options, subscription, await runner.settings.all())
 
     youtube_id = video["youtube_id"]
     request = DownloadRequest(
         youtube_id=youtube_id,
         workdir=layout.incomplete_dir(youtube_id),
-        quality=choose("quality", "default_quality"),
-        subtitle_languages=choose("subtitle_languages", "subtitle_languages"),
-        comments=choose("download_comments", "download_comments"),
+        quality=options["quality"],
+        subtitle_languages=options["subtitle_languages"],
+        comments=options["download_comments"],
+        auto_captions=options["auto_captions"],
+        audio_languages=options["audio_languages"],
+        live_chat=options["live_chat"],
+        sponsorblock=options["sponsorblock"],
     )
     progress = runner.progress.setdefault(job["id"], Progress())
     try:
@@ -49,6 +55,10 @@ async def run_download(
         raise
 
     progress.update({"status": "processing"})
+    facts = archive_facts(info)
+    own = info.setdefault("_youhoard", {})
+    own["audio_languages"] = facts["audio_languages"]
+    own["acodec"] = facts["acodec"]
     async with db.transaction() as conn:
         await save_video_info(conn, info)
         channel = await fetch_one(
@@ -76,7 +86,13 @@ async def run_download(
     media_path, size = await asyncio.to_thread(place)
     async with db.transaction() as conn:
         await record_archived(
-            conn, video["id"], media_path, size, info.get("width"), info.get("height")
+            conn,
+            video["id"],
+            media_path,
+            size,
+            info.get("width"),
+            info.get("height"),
+            facts=facts,
         )
         await conn.execute("UPDATE videos SET unavailable_at = NULL WHERE id = ?", (video["id"],))
     return {"media_path": media_path, "media_size": size, "height": info.get("height")}

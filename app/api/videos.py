@@ -2,17 +2,28 @@
 
 import asyncio
 import shutil
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
-from app import layout
-from app.api.deps import get_db, get_runner, get_youtube, load_video, not_found, video_out
-from app.db import Database, now
+from app import layout, sidecar
+from app.api.deps import (
+    clean_languages,
+    get_db,
+    get_runner,
+    get_youtube,
+    load_video,
+    not_found,
+    video_out,
+)
+from app.db import Database, loads, now
 from app.jobs import JobRunner
+from app.languages import language_name
 from app.library import VIDEO_SELECT, save_video_info
+from app.tracks import AUTO, TRANSLATED, UPLOADED
 from app.youtube import (
     QUALITIES,
     Inaccessible,
@@ -31,13 +42,31 @@ SORTS = {
     "added": "v.created_at",
     "title": "v.title COLLATE NOCASE",
     "duration": "v.duration",
+    "views": "v.view_count",
 }
 STATUSES = ("archived", "downloading", "queued", "failed", "deleted", "missing")
+SUBTITLE_SOURCES = (UPLOADED, AUTO, TRANSLATED)
 
 
-class AddVideo(BaseModel):
-    url: str
+class VideoOptions(BaseModel):
+    """Download options for this video; anything left out follows the subscription or library."""
+
     quality: Quality | None = None
+    subtitle_languages: list[str] | None = None
+    auto_captions: bool | None = None
+    download_comments: bool | None = None
+    audio_languages: list[str] | None = None
+    live_chat: bool | None = None
+    sponsorblock: bool | None = None
+
+    @field_validator("subtitle_languages", "audio_languages")
+    @classmethod
+    def languages(cls, value: list[str] | None) -> list[str] | None:
+        return clean_languages(value)
+
+
+class AddVideo(VideoOptions):
+    url: str
 
     @field_validator("url")
     @classmethod
@@ -45,33 +74,19 @@ class AddVideo(BaseModel):
         return parse_video_url(value)
 
 
-class DownloadRequest(BaseModel):
-    quality: Quality | None = None
-
-
 class Watched(BaseModel):
     watched: bool
 
 
-@router.get("")
-async def list_videos(
+def video_filters(
     q: str | None = None,
-    status: Literal[STATUSES] | None = None,
     video_type: Literal["video", "short", "live"] | None = None,
     channel_id: int | None = None,
     watched: bool | None = None,
-    sort: Literal[tuple(SORTS)] = "published",
-    order: Literal["asc", "desc"] = "desc",
-    page: int = Query(1, ge=1),
-    per_page: int = Query(48, ge=1, le=200),
-    db: Database = Depends(get_db),
-):
-    clauses, params = [], []
-    if status:
-        clauses.append("s.status = ?")
-        params.append(status)
-    else:
-        clauses.append("s.status != 'deleted'")
+    unavailable: bool | None = None,
+) -> tuple[list[str], list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
     if q:
         clauses.append("(v.title LIKE ? OR v.description LIKE ? OR c.name LIKE ?)")
         params += [f"%{q.strip()}%"] * 3
@@ -83,6 +98,24 @@ async def list_videos(
         params.append(channel_id)
     if watched is not None:
         clauses.append(f"v.watched_at IS {'NOT ' if watched else ''}NULL")
+    if unavailable is not None:
+        clauses.append(f"v.unavailable_at IS {'NOT ' if unavailable else ''}NULL")
+    return clauses, params
+
+
+@router.get("")
+async def list_videos(
+    status: Literal[STATUSES] | None = None,
+    filters: tuple[list[str], list[Any]] = Depends(video_filters),
+    sort: Literal[tuple(SORTS)] = "published",
+    order: Literal["asc", "desc"] = "desc",
+    page: int = Query(1, ge=1),
+    per_page: int = Query(48, ge=1, le=200),
+    db: Database = Depends(get_db),
+):
+    clauses, params = filters
+    clauses = ["s.status = ?" if status else "s.status != 'deleted'", *clauses]
+    params = [status, *params] if status else params
     where = " AND ".join(clauses)
     total = await db.fetch_value(
         "SELECT count(*) FROM videos v JOIN video_status s ON s.video_id = v.id "
@@ -103,22 +136,89 @@ async def list_videos(
     }
 
 
+@router.get("/counts")
+async def video_counts(
+    filters: tuple[list[str], list[Any]] = Depends(video_filters),
+    db: Database = Depends(get_db),
+):
+    """How many videos each status tab would show under the same filters."""
+    clauses, params = filters
+    where = " AND ".join(clauses) or "1"
+    rows = await db.fetch_all(
+        "SELECT s.status, count(*) AS n, count(v.unavailable_at) AS gone "
+        "FROM videos v JOIN video_status s ON s.video_id = v.id "
+        f"LEFT JOIN channels c ON c.id = v.channel_id WHERE {where} GROUP BY s.status",
+        params,
+    )
+    counts = dict.fromkeys(STATUSES, 0)
+    unavailable = 0
+    for row in rows:
+        counts[row["status"]] = row["n"]
+        if row["status"] != "deleted":
+            unavailable += row["gone"]
+    return {
+        "all": sum(n for status, n in counts.items() if status != "deleted"),
+        "archived": counts["archived"],
+        "downloading": counts["downloading"],
+        "queued": counts["queued"],
+        "failed": counts["failed"],
+        "missing": counts["missing"],
+        "deleted": counts["deleted"],
+        "unavailable": unavailable,
+    }
+
+
+def subtitle_list(row: dict[str, Any], media: Path, info: dict[str, Any]) -> list[dict[str, Any]]:
+    """The subtitle files with the language name and source recorded when they were saved."""
+    saved = loads(row["subtitle_tracks"]) or (info.get("_youhoard") or {}).get("subtitles") or []
+    recorded = {t["lang"]: t for t in saved if isinstance(t, dict) and t.get("lang")}
+    found = layout.subtitles_for(media)
+    languages = [lang for lang in recorded if lang in found]
+    languages += sorted(lang for lang in found if lang not in recorded)
+    tracks = []
+    for lang in languages:
+        track = recorded.get(lang, {})
+        source = track.get("source")
+        tracks.append(
+            {
+                "lang": lang,
+                "name": track.get("name") or language_name(lang) or lang,
+                "source": source if source in SUBTITLE_SOURCES else "unknown",
+                "url": f"/api/videos/{row['id']}/subtitles/{lang}",
+            }
+        )
+    return tracks
+
+
+def video_details(row: dict[str, Any], media: Path | None) -> dict[str, Any]:
+    info = sidecar.read_info(media) if media else {}
+    comments = info.get("comments")
+    video_id = row["id"]
+    return {
+        "tags": [str(tag) for tag in info.get("tags") or ()],
+        "categories": [str(category) for category in info.get("categories") or ()],
+        "chapters": sidecar.chapters(info),
+        "heatmap": sidecar.heatmap(info),
+        "sponsor_segments": sidecar.sponsor_segments(info),
+        "subtitles": subtitle_list(row, media, info) if media else [],
+        "files": sidecar.files(media) if media else [],
+        "comments": {"saved": len(comments), "url": f"/api/videos/{video_id}/comments"}
+        if isinstance(comments, list)
+        else None,
+        "chat_url": f"/api/videos/{video_id}/chat" if media and layout.chat_for(media) else None,
+    }
+
+
 @router.get("/{video_id}")
 async def get_video(video_id: int, db: Database = Depends(get_db)):
     row = await load_video(db, video_id)
-    video = video_out(row)
-    video["subtitles"] = []
+    media = None
     if row["media_path"]:
         try:
             media = layout.media_file(row["media_path"], row["youtube_id"])
         except layout.PathError:
-            media = None
-        if media is not None:
-            video["subtitles"] = [
-                {"lang": lang, "url": f"/api/videos/{video_id}/subtitles/{lang}"}
-                for lang in layout.subtitles_for(media)
-            ]
-    return video
+            pass
+    return {**video_out(row), **await asyncio.to_thread(video_details, row, media)}
 
 
 @router.post("", status_code=201)
@@ -145,7 +245,7 @@ async def add_video(
             raise HTTPException(status_code=422, detail=str(error)) from error
         except YouTubeError as error:
             raise HTTPException(status_code=502, detail=f"YouTube: {error}") from error
-    options = {"quality": body.quality} if body.quality else {}
+    options = body.model_dump(exclude={"url"}, exclude_none=True)
     async with db.transaction() as conn:
         if existing:
             video_id = existing["id"]
@@ -164,14 +264,14 @@ async def add_video(
 @router.post("/{video_id}/download")
 async def download_video(
     video_id: int,
-    body: DownloadRequest | None = None,
+    body: VideoOptions | None = None,
     db: Database = Depends(get_db),
     runner: JobRunner = Depends(get_runner),
 ):
     video = await load_video(db, video_id)
     if video["status"] == "archived":
         raise HTTPException(status_code=409, detail="This video is already archived")
-    options = {"quality": body.quality} if body and body.quality else {}
+    options = body.model_dump(exclude_none=True) if body else {}
     async with db.transaction() as conn:
         await conn.execute("UPDATE videos SET deleted_at = NULL WHERE id = ?", (video_id,))
         job_id = await runner.enqueue(
@@ -193,7 +293,8 @@ async def delete_video(video_id: int, db: Database = Depends(get_db)):
     await asyncio.to_thread(shutil.rmtree, layout.incomplete_dir(video["youtube_id"]), True)
     await db.execute(
         "UPDATE videos SET media_path = NULL, media_size = NULL, width = NULL, height = NULL, "
-        "deleted_at = ?, updated_at = ? WHERE id = ?",
+        "fps = NULL, vcodec = NULL, acodec = NULL, dynamic_range = NULL, audio_languages = NULL, "
+        "subtitle_tracks = NULL, deleted_at = ?, updated_at = ? WHERE id = ?",
         (now(), now(), video_id),
     )
     return {"ok": True}
@@ -243,3 +344,31 @@ async def subtitles(video_id: int, lang: str, db: Database = Depends(get_db)):
     if path is None:
         raise not_found("Subtitles")
     return FileResponse(path, media_type="text/vtt", headers={"Cache-Control": "private"})
+
+
+def comment_page(media: Path, sort: str, page: int, per_page: int) -> tuple[list[Any], int]:
+    comments = sidecar.read_info(media).get("comments")
+    threads = sidecar.comment_threads(comments if isinstance(comments, list) else [], sort)
+    start = (page - 1) * per_page
+    return threads[start : start + per_page], len(threads)
+
+
+@router.get("/{video_id}/comments")
+async def comments(
+    video_id: int,
+    sort: Literal["top", "new"] = "top",
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    db: Database = Depends(get_db),
+):
+    media = await archived_media(db, video_id)
+    items, total = await asyncio.to_thread(comment_page, media, sort, page, per_page)
+    return {"items": items, "total": total, "page": page, "per_page": per_page}
+
+
+@router.get("/{video_id}/chat")
+async def chat(video_id: int, db: Database = Depends(get_db)):
+    path = layout.chat_for(await archived_media(db, video_id))
+    if path is None:
+        raise not_found("Chat replay")
+    return {"items": await asyncio.to_thread(sidecar.chat_messages, path)}

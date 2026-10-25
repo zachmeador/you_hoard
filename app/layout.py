@@ -130,6 +130,11 @@ def info_for(media: Path) -> Path | None:
     return path if path.is_file() else None
 
 
+def chat_for(media: Path) -> Path | None:
+    path = media.with_name(media.stem + ".live_chat.json")
+    return path if path.is_file() else None
+
+
 def subtitles_for(media: Path) -> dict[str, Path]:
     prefix = media.stem + "."
     found = {}

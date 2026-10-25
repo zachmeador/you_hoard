@@ -11,10 +11,11 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 
 from app import __version__
-from app.api.deps import get_db, get_runner, get_settings, get_youtube
+from app.api.deps import clean_languages, get_db, get_runner, get_settings, get_youtube
 from app.config import config
-from app.db import Database
+from app.db import Database, now
 from app.jobs import JobRunner
+from app.languages import language_options
 from app.settings import Settings
 from app.youtube import QUALITIES, YouTube
 
@@ -25,14 +26,18 @@ CHECK_INTERVALS = [1, 3, 6, 12, 24, 72, 168]
 class SettingsUpdate(BaseModel):
     default_quality: Literal[tuple(QUALITIES)] | None = None
     subtitle_languages: list[str] | None = None
+    auto_captions: bool | None = None
     download_comments: bool | None = None
+    audio_languages: list[str] | None = None
+    live_chat: bool | None = None
+    sponsorblock: bool | None = None
     max_concurrent_downloads: int | None = Field(None, ge=1, le=8)
     check_interval_hours: int | None = Field(None, ge=1, le=720)
 
-    @field_validator("subtitle_languages")
+    @field_validator("subtitle_languages", "audio_languages")
     @classmethod
     def languages(cls, value: list[str] | None) -> list[str] | None:
-        return [lang.strip() for lang in value if lang.strip()] if value is not None else None
+        return clean_languages(value)
 
 
 async def settings_out(settings: Settings) -> dict:
@@ -43,6 +48,7 @@ async def settings_out(settings: Settings) -> dict:
             "check_intervals": CHECK_INTERVALS,
             "policies": ["none", "new", "recent", "all"],
             "content_types": ["video", "short", "live"],
+            "languages": language_options(),
         },
     }
 
@@ -97,10 +103,13 @@ async def system_status(db: Database = Depends(get_db), youtube: YouTube = Depen
            FROM videos WHERE deleted_at IS NULL"""
     )
     queue = await db.fetch_one(
-        """SELECT count(CASE WHEN status = 'queued' THEN 1 END) AS queued,
+        """SELECT count(CASE WHEN status = 'queued' AND coalesce(run_after, '') <= ? THEN 1 END)
+                      AS queued,
+                  count(CASE WHEN status = 'queued' AND run_after > ? THEN 1 END) AS waiting,
                   count(CASE WHEN status = 'running' THEN 1 END) AS running,
                   count(CASE WHEN status = 'failed' THEN 1 END) AS failed
-           FROM jobs"""
+           FROM jobs""",
+        (now(), now()),
     )
     return {
         "version": __version__,
