@@ -1,0 +1,193 @@
+/* ---------- queue ---------- */
+.qsum {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 16px 40px;
+  align-items: end;
+  padding: 2px 0 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.qsum .big {
+  font: 600 30px/1 var(--f-sans);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.qsum .big small {
+  font-size: var(--fs-base);
+  font-weight: var(--fw-small);
+  color: var(--ink-3);
+  margin-left: 5px;
+  letter-spacing: 0;
+}
+.qsum .slots {
+  display: flex;
+  gap: 4px;
+  margin-top: 9px;
+}
+.qsum .slots i {
+  width: 30px;
+  height: 8px;
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--rule-2);
+}
+.qsum .slots i.on {
+  background: var(--prog);
+  box-shadow: none;
+}
+.qsum .k {
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+.qsum .bulk {
+  justify-self: end;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.qtabs {
+  margin-top: 4px;
+}
+.run {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) auto;
+  gap: 6px 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--rule);
+  align-items: start;
+}
+.run .mini {
+  width: 132px;
+}
+.run .ttl {
+  font-size: 16px;
+  font-weight: var(--fw-title);
+}
+.run .meta {
+  margin-top: 3px;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.run .prog {
+  margin-top: 12px;
+  height: 4px;
+}
+.run .stats {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 16px;
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+.run .stats b {
+  color: var(--ink);
+  font-weight: var(--fw-ui);
+}
+.run .stats .pct {
+  color: var(--ink);
+  font-weight: var(--fw-label);
+}
+.run .acts {
+  display: flex;
+  gap: 6px;
+}
+.run.check .glyph {
+  width: 132px;
+  aspect-ratio: 16/9;
+  display: grid;
+  place-items: center;
+  background: var(--bg-1);
+  box-shadow: inset 0 0 0 1px var(--rule-2);
+  color: var(--ink-3);
+}
+.q .c-pos {
+  width: 48px;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+.q .c-when {
+  width: 160px;
+  white-space: nowrap;
+}
+.q .c-when b {
+  display: block;
+  color: var(--ink);
+  font-weight: var(--fw-ui);
+  font-size: var(--fs-base);
+}
+.q .c-when span {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+.q .c-when.wt b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.q .c-when.wt b::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--wait);
+}
+.q .c-when.wt span {
+  padding-left: 15px;
+}
+.q .c-added {
+  width: 104px;
+}
+.q .c-tries {
+  width: 72px;
+}
+.q .c-fin {
+  width: 112px;
+}
+.q .c-res {
+  width: 280px;
+}
+.q .c-took {
+  width: 80px;
+}
+.q .c-ch {
+  width: 190px;
+  color: var(--ink-2);
+  font-size: var(--fs-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.q .c-src {
+  width: 190px;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+.q .c-act {
+  width: 160px;
+  text-align: right;
+  white-space: nowrap;
+}
+.q .c-act .btn + .btn {
+  margin-left: 4px;
+}
+.q .c-kind {
+  width: 100px;
+}
+.why {
+  margin-top: 3px;
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+.why .e {
+  color: var(--fail);
+}
+.nothing {
+  padding: 10px 0;
+}
+.tfoot .more-btn {
+  margin: 0 0 0 10px;
+}

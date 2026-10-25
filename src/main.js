@@ -1,5 +1,15 @@
 import { mount } from 'svelte'
-import './app.css'
+import '@fontsource-variable/inter/opsz.css'
+import './styles/tokens.css'
+import './styles/base.css'
+import './styles/layout.css'
+import './styles/library.css'
+import './styles/watch.css'
+import './styles/subscriptions.css'
+import './styles/queue.css'
+import './styles/system.css'
+import './styles/dialog.css'
+import './styles/responsive.css'
 import App from './App.svelte'
 
 mount(App, { target: document.getElementById('app') ?? document.body })

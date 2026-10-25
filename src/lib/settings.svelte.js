@@ -6,13 +6,14 @@ export const DEFAULT_OPTIONS = {
   qualities: ['best', '2160p', '1440p', '1080p', '720p', '480p', '360p'],
   check_intervals: [1, 3, 6, 12, 24, 72, 168],
   policies: ['none', 'new', 'recent', 'all'],
-  content_types: ['video', 'short', 'live']
+  content_types: ['video', 'short', 'live'],
+  languages: []
 }
 
 class LibrarySettings {
   /** @type {Settings | null} */
   current = $state(null)
-  options = $derived(this.current?.options ?? DEFAULT_OPTIONS)
+  options = $derived({ ...DEFAULT_OPTIONS, ...this.current?.options })
   /** @type {Promise<Settings> | null} */
   #pending = null
 

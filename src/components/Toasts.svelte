@@ -1,6 +1,7 @@
 <script>
   import { fly } from 'svelte/transition'
   import { dismiss, toasts } from '../lib/toasts.svelte.js'
+  import Icon from './Icon.svelte'
 
   /** @type {HTMLDivElement | undefined} */
   let region = $state()
@@ -22,69 +23,17 @@
 <div bind:this={region} popover="manual" class="toasts" aria-live="polite">
   {#each toasts as toast (toast.id)}
     <div
-      class="toast toast-{toast.kind}"
+      class="toast"
+      class:error={toast.kind === 'error'}
       role={toast.kind === 'error' ? 'alert' : 'status'}
-      transition:fly={{ x: 32, duration: 180 }}
+      transition:fly={{ y: 8, duration: 160 }}
     >
-      <p class="message">{toast.message}</p>
-      <button type="button" class="icon-btn" aria-label="Dismiss notification" onclick={() => dismiss(toast.id)}>
-        ×
-      </button>
+      <span class="msg">{toast.message}</span>
+      {#if toast.kind === 'error'}
+        <button type="button" class="dismiss" aria-label="Dismiss notification" onclick={() => dismiss(toast.id)}>
+          <Icon name="x" />
+        </button>
+      {/if}
     </div>
   {/each}
 </div>
-
-<style>
-  .toasts {
-    position: fixed;
-    inset: var(--space-4) var(--space-4) auto auto;
-    width: min(380px, calc(100vw - 2rem));
-    height: auto;
-    margin: 0;
-    padding: 0;
-    border: none;
-    background: transparent;
-    color: var(--text-primary);
-    overflow: visible;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    pointer-events: none;
-  }
-
-  .toast {
-    pointer-events: auto;
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-left: 4px solid var(--info);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-  }
-
-  .toast-success {
-    border-left-color: var(--success);
-    box-shadow: var(--shadow), var(--glow-primary);
-  }
-
-  .toast-error {
-    border-left-color: var(--error);
-    box-shadow: var(--shadow), 0 0 10px var(--accent-glow);
-  }
-
-  .message {
-    flex: 1;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-
-  @media (max-width: 640px) {
-    .toasts {
-      inset: auto var(--space-2) var(--space-2) var(--space-2);
-      width: auto;
-    }
-  }
-</style>

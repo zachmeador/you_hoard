@@ -1,26 +1,51 @@
 <script>
-  /** @import { Channel, Page, Video } from '../lib/types' */
+  /** @import { Channel, Page, Subscription, Video, VideoCounts } from '../lib/types' */
   import { onMount, untrack } from 'svelte'
   import { api } from '../lib/api.js'
-  import { CONTENT_TYPES, STATUS, int, plural } from '../lib/format.js'
+  import { groupLabel } from '../lib/format.js'
   import { Loader } from '../lib/loader.svelte.js'
-  import { poll } from '../lib/poll.js'
+  import { prefs } from '../lib/prefs.svelte.js'
+  import { queue } from '../lib/queue.svelte.js'
   import { pageParam, router, updateQuery } from '../lib/router.svelte.js'
-  import { ui } from '../lib/ui.svelte.js'
-  import Pagination from '../components/Pagination.svelte'
-  import SearchBox from '../components/SearchBox.svelte'
-  import VideoCard from '../components/VideoCard.svelte'
-  import VideoDialog from '../components/VideoDialog.svelte'
+  import { clock, openAdd, ui } from '../lib/ui.svelte.js'
+  import ChannelBand from '../components/ChannelBand.svelte'
+  import FilterTabs from '../components/FilterTabs.svelte'
+  import Icon from '../components/Icon.svelte'
+  import Pager from '../components/Pager.svelte'
+  import SearchField from '../components/SearchField.svelte'
+  import Segmented from '../components/Segmented.svelte'
+  import SelectField from '../components/SelectField.svelte'
+  import VideoTable from '../components/VideoTable.svelte'
+  import VideoTile from '../components/VideoTile.svelte'
 
   const PER_PAGE = 48
-  const STATUSES = ['archived', 'queued', 'downloading', 'failed', 'missing', 'deleted']
-  const TYPES = /** @type {const} */ (['video', 'short', 'live'])
-  const SORTS = [
-    ['published', 'Published'],
-    ['archived', 'Archived'],
-    ['added', 'Added'],
-    ['title', 'Title'],
-    ['duration', 'Duration']
+  const FACETS = [
+    { value: '', label: 'All', key: 'all' },
+    { value: 'archived', label: 'Archived', key: 'archived' },
+    { value: 'downloading', label: 'Downloading', key: 'downloading' },
+    { value: 'queued', label: 'Queued', key: 'queued' },
+    { value: 'failed', label: 'Failed', key: 'failed' },
+    { value: 'missing', label: 'Not downloaded', key: 'missing' },
+    { value: 'deleted', label: 'Files removed', key: 'deleted' }
+  ]
+  const TYPE_OPTIONS = [
+    { value: '', label: 'All' },
+    { value: 'video', label: 'Videos' },
+    { value: 'short', label: 'Shorts' },
+    { value: 'live', label: 'Streams' }
+  ]
+  const WATCHED_OPTIONS = [
+    { value: '', label: 'Any' },
+    { value: 'false', label: 'Unwatched' },
+    { value: 'true', label: 'Watched' }
+  ]
+  const SORT_OPTIONS = [
+    { value: 'published', label: 'Published' },
+    { value: 'archived', label: 'Archived' },
+    { value: 'added', label: 'Added' },
+    { value: 'title', label: 'Title' },
+    { value: 'duration', label: 'Duration' },
+    { value: 'views', label: 'Views' }
   ]
 
   const filters = $derived({
@@ -33,30 +58,64 @@
     order: router.query.order ?? 'desc',
     page: pageParam(router.query.page)
   })
-  const search = $derived(filters.q)
-  const channelId = $derived(Number(router.query.channel) || 0)
-  const filtered = $derived(Boolean(filters.q || filters.status || filters.type || filters.watched || filters.channel))
+  const filtered = $derived(Boolean(filters.q || filters.type || filters.watched || filters.channel))
 
   /** @type {Loader<Page<Video>>} */
   const videos = new Loader()
+  /** @type {Loader<VideoCounts>} */
+  const counts = new Loader()
   /** @type {Channel[]} */
   let channels = $state([])
-  let channelTotal = $state(0)
-  let activeChannel = $state(/** @type {Channel | null} */ (null))
-  let selected = $state(/** @type {Video | null} */ (null))
+  /** @type {Channel | null} */
+  let activeChannel = $state(null)
+  /** @type {Subscription | null} */
+  let activeSubscription = $state(null)
+  let search = $state(untrack(() => router.query.q ?? ''))
 
-  const channelOptions = $derived(
-    activeChannel && !channels.some((c) => c.id === activeChannel?.id) ? [activeChannel, ...channels] : channels
-  )
-  const hasPending = $derived(
-    videos.data?.items.some((v) => v.status === 'queued' || v.status === 'downloading') ?? false
-  )
+  const items = $derived(videos.data?.items ?? [])
+  const pages = $derived(Math.max(1, Math.ceil((videos.data?.total ?? 0) / (videos.data?.per_page || PER_PAGE))))
+  const tabs = $derived([
+    ...FACETS.map((facet) => ({
+      value: facet.value,
+      label: facet.label,
+      count: counts.data ? counts.data[/** @type {keyof VideoCounts} */ (facet.key)] : null
+    })),
+    { value: 'gone', label: 'Gone from YouTube', count: counts.data?.unavailable ?? null, gone: true, gap: true }
+  ])
+  const channelOptions = $derived.by(() => {
+    const list = activeChannel && !channels.some((c) => c.id === activeChannel?.id) ? [activeChannel, ...channels] : channels
+    return [{ value: '', label: 'All' }, ...list.map((c) => ({ value: String(c.id), label: c.name }))]
+  })
+  const cells = $derived.by(() => {
+    if (filters.sort !== 'published') return items.map((video) => ({ video, group: '' }))
+    let last = ''
+    return items.map((video) => {
+      const group = groupLabel(video.published_at, clock.now)
+      const heading = group === last ? '' : group
+      last = group
+      return { video, group: heading }
+    })
+  })
+  const tokens = $derived.by(() => {
+    /** @type {{ key: string, label: string }[]} */
+    const list = []
+    if (filters.q) list.push({ key: 'q', label: `“${filters.q}”` })
+    if (filters.type) list.push({ key: 'type', label: TYPE_OPTIONS.find((o) => o.value === filters.type)?.label ?? filters.type })
+    if (filters.watched) list.push({ key: 'watched', label: WATCHED_OPTIONS.find((o) => o.value === filters.watched)?.label ?? filters.watched })
+    if (filters.channel) {
+      const known = activeChannel ?? channels.find((c) => String(c.id) === filters.channel)
+      list.push({ key: 'channel', label: known?.name ?? 'Channel' })
+    }
+    return list
+  })
 
   /** @param {typeof filters} f */
-  function fetchVideos(f) {
-    return api.videos.list({
+  function listQuery(f) {
+    const gone = f.status === 'gone'
+    return {
       q: f.q,
-      status: f.status,
+      status: gone ? '' : f.status,
+      unavailable: gone ? 'true' : '',
       video_type: f.type,
       watched: f.watched,
       channel_id: f.channel,
@@ -64,22 +123,24 @@
       order: f.order,
       page: f.page,
       per_page: PER_PAGE
-    })
+    }
   }
 
-  function reload() {
-    videos.run(() => fetchVideos(filters))
-  }
-
+  let lastKey = ''
   $effect(() => {
     const f = filters
-    void ui.videosVersion
-    untrack(() => videos.run(() => fetchVideos(f)))
-  })
-
-  $effect(() => {
-    if (!hasPending) return
-    return poll(() => videos.run(() => fetchVideos(filters), { quiet: true }), 3000, { immediate: false })
+    const version = ui.videosVersion
+    void queue.signature
+    const key = JSON.stringify(f) + version
+    untrack(() => {
+      const quiet = key === lastKey
+      lastKey = key
+      videos.run(() => api.videos.list(listQuery(f)), { quiet })
+      counts.run(
+        () => api.videos.counts({ q: f.q, video_type: f.type, watched: f.watched, channel_id: f.channel }),
+        { quiet: true }
+      )
+    })
   })
 
   $effect(() => {
@@ -91,47 +152,72 @@
   })
 
   $effect(() => {
-    const id = channelId
-    if (!id) {
-      activeChannel = null
-      return
-    }
+    const id = Number(filters.channel) || 0
+    void ui.channelsVersion
+    void ui.subscriptionsVersion
     untrack(() => {
-      if (activeChannel?.id === id) return
+      if (activeChannel?.id !== id) {
+        activeChannel = null
+        activeSubscription = null
+      }
+      if (!id) return
       api.channels
         .get(id)
-        .then((channel) => {
-          if (channelId === channel.id) activeChannel = channel
+        .then(async (channel) => {
+          if (Number(filters.channel) !== channel.id) return
+          activeChannel = channel
+          const sub = channel.subscription_id
+            ? await api.subscriptions.get(channel.subscription_id).catch(() => null)
+            : null
+          if (Number(filters.channel) === channel.id) activeSubscription = sub
         })
         .catch(() => {})
     })
   })
 
+  $effect(() => {
+    const external = router.query.q ?? ''
+    untrack(() => {
+      if (external !== search.trim()) search = external
+    })
+  })
+
+  $effect(() => {
+    const value = search.trim()
+    const timer = setTimeout(() => {
+      if (value !== (router.query.q ?? '')) updateQuery({ q: value })
+    }, 250)
+    return () => clearTimeout(timer)
+  })
+
   onMount(() => {
     api.channels
-      .list({ per_page: 200 })
-      .then((res) => {
-        channels = res.items
-        channelTotal = res.total
-      })
+      .list({ per_page: 500 })
+      .then((res) => (channels = res.items))
       .catch(() => {})
   })
 
-  /** @param {Video} updated */
-  function patch(updated) {
-    const items = videos.data?.items
-    if (!items) return
-    const i = items.findIndex((v) => v.id === updated.id)
-    if (i !== -1) items[i] = updated
+  /** @param {string} key */
+  function sortBy(key) {
+    if (filters.sort === key) updateQuery({ order: filters.order === 'desc' ? 'asc' : 'desc' })
+    else updateQuery({ sort: key, order: key === 'title' ? 'asc' : 'desc' })
   }
 
-  /** @param {Event & { currentTarget: HTMLSelectElement }} event */
-  function selectValue(event) {
-    return event.currentTarget.value
+  /** @param {number} page */
+  function goTo(page) {
+    updateQuery({ page: page > 1 ? page : null })
+    window.scrollTo({ top: 0 })
   }
 
-  function resetFilters() {
-    updateQuery({ q: '', status: '', type: '', watched: '', channel: '' })
+  /** @param {string} key */
+  function removeToken(key) {
+    if (key === 'q') search = ''
+    updateQuery({ [key]: '' })
+  }
+
+  function reset() {
+    search = ''
+    updateQuery({ q: '', type: '', watched: '', channel: '' })
   }
 </script>
 
@@ -139,158 +225,101 @@
   <title>{activeChannel ? `${activeChannel.name} · ` : ''}Library · YouHoard</title>
 </svelte:head>
 
-<div class="page-head">
-  <h1 class="page-title">Library</h1>
-  {#if videos.data}
-    <span class="muted">{plural(videos.data.total, 'video')}{filtered ? ' match' : ''}</span>
-  {/if}
-</div>
-
-{#if activeChannel}
-  <div class="channel-bar">
-    <span>Channel: <strong>{activeChannel.name}</strong></span>
-    <span class="muted small">{int(activeChannel.archived_count)} of {int(activeChannel.video_count)} archived</span>
-    {#if activeChannel.subscription_id}
-      <a class="badge badge-ok" href="#/subscriptions/{activeChannel.subscription_id}">Subscribed</a>
-    {/if}
-    <a class="ext-link small" href={activeChannel.youtube_url} target="_blank" rel="noopener noreferrer">YouTube ↗</a>
-  </div>
+{#if filters.channel && activeChannel}
+  <ChannelBand channel={activeChannel} subscription={activeSubscription} onclear={() => updateQuery({ channel: '' })} />
 {/if}
 
-<div class="toolbar">
-  <SearchBox value={search} label="Search videos" placeholder="Search videos…" onsearch={(q) => updateQuery({ q })} />
+<header class="ph lib-h">
+  <h1>Library</h1>
+  <div class="ph-r">
+    <Segmented
+      label="Layout"
+      class="view"
+      value={prefs.view}
+      options={[
+        { value: 'grid', label: 'Grid', icon: 'grid' },
+        { value: 'list', label: 'List', icon: 'list' }
+      ]}
+      onchange={(value) => prefs.setView(value === 'list' ? 'list' : 'grid')}
+    />
+  </div>
+</header>
 
-  <label class="sr-only" for="library-status">Status</label>
-  <select id="library-status" value={filters.status} onchange={(e) => updateQuery({ status: selectValue(e) })}>
-    <option value="">All statuses</option>
-    {#each STATUSES as status (status)}
-      <option value={status}>{STATUS[status].label}</option>
-    {/each}
-  </select>
-
-  <label class="sr-only" for="library-type">Type</label>
-  <select id="library-type" value={filters.type} onchange={(e) => updateQuery({ type: selectValue(e) })}>
-    <option value="">All types</option>
-    {#each TYPES as type (type)}
-      <option value={type}>{CONTENT_TYPES[type]}</option>
-    {/each}
-  </select>
-
-  <label class="sr-only" for="library-watched">Watched</label>
-  <select id="library-watched" value={filters.watched} onchange={(e) => updateQuery({ watched: selectValue(e) })}>
-    <option value="">Watched: any</option>
-    <option value="false">Unwatched</option>
-    <option value="true">Watched</option>
-  </select>
-
-  <label class="sr-only" for="library-channel">Channel</label>
-  <select id="library-channel" value={filters.channel} onchange={(e) => updateQuery({ channel: selectValue(e) })}>
-    <option value="">All channels</option>
-    {#each channelOptions as channel (channel.id)}
-      <option value={String(channel.id)}>{channel.name}</option>
-    {/each}
-    {#if channelTotal > channels.length}
-      <option disabled value="more">More on the Channels page…</option>
-    {/if}
-  </select>
-
-  <label class="sr-only" for="library-sort">Sort by</label>
-  <select
-    id="library-sort"
-    value={filters.sort}
-    onchange={(e) => {
-      const sort = selectValue(e)
-      updateQuery({ sort: sort === 'published' ? '' : sort })
-    }}
-  >
-    {#each SORTS as [value, label] (value)}
-      <option {value}>{label}</option>
-    {/each}
-  </select>
-
-  <label class="sr-only" for="library-order">Order</label>
-  <select
-    id="library-order"
-    value={filters.order}
-    onchange={(e) => {
-      const order = selectValue(e)
-      updateQuery({ order: order === 'desc' ? '' : order })
-    }}
-  >
-    <option value="desc">↓ Desc</option>
-    <option value="asc">↑ Asc</option>
-  </select>
-
-  {#if filtered}
-    <button type="button" class="btn btn-ghost btn-sm" onclick={resetFilters}>Reset filters</button>
-  {/if}
+<div class="lib-bar">
+  <div class="toolbar">
+    <SearchField label="Search the library" placeholder="Search titles, channels, video IDs" kbd="/" bind:value={search} />
+    <div class="filters">
+      <SelectField label="Type" value={filters.type} options={TYPE_OPTIONS} onchange={(value) => updateQuery({ type: value })} />
+      <SelectField
+        label="Watched"
+        value={filters.watched}
+        options={WATCHED_OPTIONS}
+        onchange={(value) => updateQuery({ watched: value })}
+      />
+      <SelectField
+        label="Channel"
+        value={filters.channel}
+        options={channelOptions}
+        onchange={(value) => updateQuery({ channel: value })}
+      />
+      <SelectField
+        label="Sort"
+        value={filters.sort}
+        options={SORT_OPTIONS}
+        onchange={(value) => updateQuery({ sort: value, order: value === 'title' ? 'asc' : 'desc' })}
+      />
+      <button
+        type="button"
+        class="btn icon"
+        aria-label={filters.order === 'desc' ? 'Descending; switch to ascending' : 'Ascending; switch to descending'}
+        title={filters.order === 'desc' ? 'Newest / largest first' : 'Oldest / smallest first'}
+        onclick={() => updateQuery({ order: filters.order === 'desc' ? 'asc' : 'desc' })}
+      >
+        <Icon name={filters.order === 'desc' ? 'down' : 'up'} />
+      </button>
+    </div>
+  </div>
+  <FilterTabs label="Status" value={filters.status} {tabs} onchange={(value) => updateQuery({ status: value })} />
 </div>
+
+{#if tokens.length}
+  <div class="resbar">
+    {#each tokens as token (token.key)}
+      <span class="token">
+        {token.label}
+        <button type="button" aria-label="Remove filter {token.label}" onclick={() => removeToken(token.key)}>
+          <Icon name="x" />
+        </button>
+      </span>
+    {/each}
+    <button type="button" class="btn sm quiet" onclick={reset}>Reset</button>
+  </div>
+{/if}
 
 {#if videos.error}
-  <div class="form-error error-bar" role="alert">
-    <span>{videos.error}</span>
-    <button type="button" class="btn btn-secondary btn-sm" onclick={reload}>Try again</button>
+  <div class="empty">
+    <b>Couldn't load the library</b>
+    {videos.error}
+    <div><button type="button" class="btn sm" onclick={() => videos.run(() => api.videos.list(listQuery(filters)))}>Try again</button></div>
   </div>
-{/if}
-
-{#if videos.data}
-  {#if videos.data.items.length === 0}
-    <div class="empty">
-      {#if filtered}
-        No videos match these filters.
-      {:else}
-        Nothing here yet. Use “Add video” above, or <a href="#/subscriptions">set up a subscription</a>.
-      {/if}
-    </div>
+{:else if videos.data && items.length === 0}
+  {#if filtered || filters.status}
+    <div class="empty"><b>No matches</b>No videos match these filters.</div>
   {:else}
-    <ul class="video-grid" class:stale={videos.loading}>
-      {#each videos.data.items as video (video.id)}
-        <li><VideoCard {video} onopen={() => (selected = video)} /></li>
-      {/each}
-    </ul>
+    <div class="empty">
+      <b>Nothing here yet</b>
+      <button type="button" class="btn" onclick={() => openAdd()}><Icon name="plus" />Add a video, channel or playlist</button>
+    </div>
   {/if}
-  <Pagination
-    page={filters.page}
-    total={videos.data.total}
-    perPage={videos.data.per_page || PER_PAGE}
-    label="Library pages"
-    onpage={(page) => {
-      updateQuery({ page: page > 1 ? page : null })
-      window.scrollTo(0, 0)
-    }}
-  />
-{:else if videos.loading}
-  <p class="loading-line"><span class="spinner"></span> Loading library…</p>
+{:else if prefs.view === 'grid'}
+  <div class="grid" aria-busy={videos.loading}>
+    {#each cells as cell (cell.video.id)}
+      {#if cell.group}<div class="grp"><h2>{cell.group}</h2></div>{/if}
+      <VideoTile video={cell.video} />
+    {/each}
+  </div>
+{:else}
+  <VideoTable videos={items} sort={filters.sort} order={filters.order} onsort={sortBy} />
 {/if}
 
-{#if selected}
-  <VideoDialog id={selected.id} initial={selected} onchange={patch} onclose={() => (selected = null)} />
-{/if}
-
-<style>
-  .channel-bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2) var(--space-3);
-    margin-bottom: var(--space-3);
-    padding: var(--space-2) var(--space-3);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--terminal-green);
-    border-radius: var(--radius);
-  }
-
-  .video-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr));
-    gap: var(--space-3);
-  }
-
-  @media (max-width: 640px) {
-    .video-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--space-2);
-    }
-  }
-</style>
+<Pager label="Pages" page={filters.page} {pages} onpage={goTo} />

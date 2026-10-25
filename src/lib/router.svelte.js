@@ -2,8 +2,8 @@ import { qs } from './api.js'
 
 /** @typedef {Record<string, string | number | null | undefined>} QueryParams */
 /**
- * @typedef {{ name: 'library' | 'channels' | 'subscriptions' | 'queue' | 'settings' | 'not-found' }
- *   | { name: 'subscription', id: number }} Route
+ * @typedef {{ name: 'library' | 'subscriptions' | 'queue' | 'system' | 'not-found' }
+ *   | { name: 'video' | 'subscription', id: number }} Route
  */
 
 /** @param {string} hash */
@@ -84,20 +84,28 @@ export function pageParam(value) {
  * @returns {Route}
  */
 export function matchRoute(path) {
+  const video = /^\/video\/(\d+)$/.exec(path)
+  if (video) return { name: 'video', id: Number(video[1]) }
   const sub = /^\/subscriptions\/(\d+)$/.exec(path)
   if (sub) return { name: 'subscription', id: Number(sub[1]) }
   switch (path) {
     case '/':
+    case '/library':
       return { name: 'library' }
-    case '/channels':
-      return { name: 'channels' }
     case '/subscriptions':
       return { name: 'subscriptions' }
     case '/queue':
       return { name: 'queue' }
-    case '/settings':
-      return { name: 'settings' }
+    case '/system':
+      return { name: 'system' }
     default:
       return { name: 'not-found' }
   }
+}
+
+/** The nav section a route belongs to. @param {Route} route */
+export function sectionOf(route) {
+  if (route.name === 'video') return 'library'
+  if (route.name === 'subscription') return 'subscriptions'
+  return route.name
 }

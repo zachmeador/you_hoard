@@ -1,0 +1,94 @@
+/* Brass tokens. Rules for where color may appear are in docs/design/mockup.html. */
+:root {
+  color-scheme: dark;
+  --f-sans:
+    'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --f-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  --fs-label: 12px;
+  --fs-xs: 13px;
+  --fs-sm: 13.5px;
+  --fs-md: 14px;
+  --fs-base: 15px;
+  --fs-title: 15.5px;
+  --fs-h3: 17px;
+  --fs-h2: 20px;
+  --fs-h1: 26px;
+  --fw-text: 400;
+  --fw-small: 450;
+  --fw-ui: 500;
+  --fw-title: 540;
+  --fw-label: 600;
+  --fw-head: 650;
+
+  --hatch: repeating-linear-gradient(135deg, transparent 0 3px, rgba(255, 255, 255, 0.075) 3px 4px);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.4);
+  --acc-wash: color-mix(in srgb, var(--acc-line) 15%, transparent);
+  --fail-wash: color-mix(in srgb, var(--fail) 10%, transparent);
+  --fail-line: color-mix(in srgb, var(--fail) 42%, transparent);
+  --gone-wash: color-mix(in srgb, var(--gone) 10%, transparent);
+  --gone-line: color-mix(in srgb, var(--gone) 42%, transparent);
+
+  --ctl: 30px;
+  --r: 2px;
+  --side: 248px;
+  --gutter: 24px;
+  --stick: 0px;
+
+  --bg: #110e0b;
+  --bg-1: #161411;
+  --bg-2: #1d1a17;
+  --bg-3: #262320;
+  --rule: #2d2925;
+  --rule-2: #3c3934;
+  --ink: #f0eae3;
+  --ink-2: #c9c4bd;
+  --ink-3: #a6a19b;
+  --ink-4: #716c66;
+  --acc: #e8b755;
+  --acc-hi: #f6c463;
+  --acc-line: #e8b755;
+  --acc-ink: #1b150b;
+  --prog: #83aeef;
+  --done: #7abf89;
+  --wait: #4abfcc;
+  --fail: #e79288;
+  --gone: #d194ce;
+  --img-prog: #83aeef;
+  --img-wait: #4abfcc;
+  --img-fail: #e79288;
+  --img-gone: #d194ce;
+  --img-gone-ink: #15110b;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --hatch: repeating-linear-gradient(135deg, transparent 0 3px, rgba(0, 0, 0, 0.09) 3px 4px);
+  --shadow: 0 12px 32px rgba(40, 30, 10, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  --acc-wash: color-mix(in srgb, var(--acc-line) 11%, transparent);
+  --fail-wash: color-mix(in srgb, var(--fail) 7%, transparent);
+  --fail-line: color-mix(in srgb, var(--fail) 38%, transparent);
+  --gone-wash: color-mix(in srgb, var(--gone) 7%, transparent);
+  --gone-line: color-mix(in srgb, var(--gone) 38%, transparent);
+
+  --bg: #f8f4ef;
+  --bg-1: #fefaf6;
+  --bg-2: #eeeae6;
+  --bg-3: #e5e1dd;
+  --rule: #dfdad4;
+  --rule-2: #cac5bf;
+  --ink: #1f1b16;
+  --ink-2: #46413c;
+  --ink-3: #66615b;
+  --ink-4: #a39d97;
+  --acc: #915b10;
+  --acc-hi: #804e03;
+  --acc-line: #915b10;
+  --acc-ink: #fffdfa;
+  --prog: #3963a1;
+  --done: #2b7440;
+  --wait: #06717a;
+  --fail: #984740;
+  --gone: #844a83;
+}

@@ -15,10 +15,18 @@ export interface ChannelRef {
   id: number
   youtube_id: string
   name: string
+  avatar_url?: string | null
 }
 
 export type VideoType = 'video' | 'short' | 'live'
 export type VideoStatus = 'archived' | 'downloading' | 'queued' | 'failed' | 'deleted' | 'missing'
+export type Availability =
+  | 'public'
+  | 'unlisted'
+  | 'private'
+  | 'needs_auth'
+  | 'subscriber_only'
+  | 'premium_only'
 
 export interface Video {
   id: number
@@ -27,6 +35,7 @@ export interface Video {
   description: string | null
   channel: ChannelRef | null
   duration: number | null
+  /** "YYYY-MM-DDTHH:MM:SSZ" when YouTube gives the exact time, else "YYYY-MM-DD" */
   published_at: string | null
   view_count: number | null
   like_count: number | null
@@ -35,6 +44,15 @@ export interface Video {
   job_id: number | null
   error: string | null
   unavailable: boolean
+  unavailable_at: string | null
+  availability: Availability | null
+  age_limit: number | null
+  fps: number | null
+  vcodec: string | null
+  acodec: string | null
+  dynamic_range: string | null
+  audio_languages: string[] | null
+  comment_count: number | null
   media_size: number | null
   width: number | null
   height: number | null
@@ -49,13 +67,51 @@ export interface Video {
   media_url: string
 }
 
+export type SubtitleSource = 'uploaded' | 'auto' | 'translated' | 'unknown'
+
 export interface Subtitle {
   lang: string
+  name: string | null
+  source: SubtitleSource
   url: string
 }
 
+export interface Chapter {
+  start: number
+  end: number
+  title: string
+}
+
+export interface HeatPoint {
+  start: number
+  end: number
+  value: number
+}
+
+export interface SponsorSegment {
+  start: number
+  end: number
+  category: string
+}
+
+export type FileKind = 'media' | 'info' | 'thumbnail' | 'subtitles' | 'chat' | 'other'
+
+export interface VideoFile {
+  path: string
+  kind: FileKind
+  size: number | null
+}
+
 export interface VideoDetail extends Video {
-  subtitles: Subtitle[]
+  tags?: string[] | null
+  categories?: string[] | null
+  chapters?: Chapter[] | null
+  heatmap?: HeatPoint[] | null
+  sponsor_segments?: SponsorSegment[] | null
+  subtitles?: Subtitle[] | null
+  files?: VideoFile[] | null
+  comments?: { saved: number; url: string } | null
+  chat_url?: string | null
 }
 
 export interface VideoQuery {
@@ -64,10 +120,57 @@ export interface VideoQuery {
   video_type?: string
   channel_id?: number | string
   watched?: string
+  unavailable?: string
   sort?: string
   order?: string
   page?: number
   per_page?: number
+}
+
+export interface VideoCounts {
+  all: number
+  archived: number
+  downloading: number
+  queued: number
+  failed: number
+  missing: number
+  deleted: number
+  unavailable: number
+}
+
+export interface VideoOptions {
+  quality?: string
+  subtitle_languages?: string[]
+  auto_captions?: boolean
+  download_comments?: boolean
+  audio_languages?: string[]
+  live_chat?: boolean
+  sponsorblock?: boolean
+}
+
+export interface Comment {
+  id: string
+  text: string
+  author: string
+  author_id: string | null
+  author_is_uploader: boolean
+  author_is_verified: boolean
+  is_pinned: boolean
+  is_favorited: boolean
+  like_count: number | null
+  timestamp: number | string | null
+  replies?: Comment[]
+}
+
+export interface CommentPage {
+  items: Comment[]
+  total: number
+}
+
+export interface ChatMessage {
+  t: number
+  author: string
+  text: string
 }
 
 export interface Channel {
@@ -82,6 +185,9 @@ export interface Channel {
   archived_size: number
   subscription_id: number | null
   youtube_url: string
+  verified?: boolean | null
+  avatar_url?: string | null
+  banner_url?: string | null
 }
 
 export type SubscriptionKind = 'channel' | 'playlist'
@@ -94,6 +200,7 @@ export interface SubscriptionCounts {
   failed: number
   not_selected: number
   removed: number
+  deleted?: number
 }
 
 export interface CheckResult {
@@ -120,6 +227,10 @@ export interface SubscriptionOptions {
   quality?: string | null
   subtitle_languages?: string[] | null
   download_comments?: boolean | null
+  audio_languages?: string[] | null
+  auto_captions?: boolean | null
+  live_chat?: boolean | null
+  sponsorblock?: boolean | null
   check_interval_hours?: number
 }
 
@@ -138,6 +249,10 @@ export interface Subscription {
   quality: string | null
   subtitle_languages: string[] | null
   download_comments: boolean | null
+  audio_languages: string[] | null
+  auto_captions: boolean | null
+  live_chat: boolean | null
+  sponsorblock: boolean | null
   check_interval_hours: number
   next_check_at: string | null
   last_checked_at: string | null
@@ -170,6 +285,8 @@ export interface Entry {
   removed_at: string | null
   video_id: number | null
   status: EntryStatus
+  channel_name?: string | null
+  view_count?: number | null
 }
 
 export interface EntryQuery {
@@ -209,7 +326,7 @@ export interface Job {
   progress: JobProgress | null
 }
 
-export type JobCounts = Record<JobStatus, number>
+export type JobCounts = Record<JobStatus, number> & { waiting: number }
 
 export interface JobList {
   items: Job[]
@@ -224,11 +341,17 @@ export interface JobQuery {
   offset?: number
 }
 
+export interface Language {
+  code: string
+  name: string
+}
+
 export interface SettingsOptions {
   qualities: string[]
   check_intervals: number[]
   policies: DownloadPolicy[]
   content_types: VideoType[]
+  languages: Language[]
 }
 
 export interface Settings {
@@ -237,6 +360,10 @@ export interface Settings {
   download_comments: boolean
   max_concurrent_downloads: number
   check_interval_hours: number
+  audio_languages: string[]
+  auto_captions: boolean
+  live_chat: boolean
+  sponsorblock: boolean
   options: SettingsOptions
 }
 

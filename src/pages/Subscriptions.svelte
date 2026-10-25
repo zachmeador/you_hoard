@@ -1,49 +1,70 @@
 <script>
   /** @import { Subscription } from '../lib/types' */
-  import { onMount } from 'svelte'
+  import { untrack } from 'svelte'
   import { api } from '../lib/api.js'
-  import { CONTENT_TYPES, POLICIES, int, interval, plural, policySummary, qualityLabel } from '../lib/format.js'
   import { Loader } from '../lib/loader.svelte.js'
   import { poll } from '../lib/poll.js'
-  import { href } from '../lib/router.svelte.js'
-  import AddSubscriptionDialog from '../components/AddSubscriptionDialog.svelte'
-  import CheckStatus from '../components/CheckStatus.svelte'
-  import SubscriptionActions from '../components/SubscriptionActions.svelte'
+  import { queue } from '../lib/queue.svelte.js'
+  import { checkNow, removeSubscription, setEnabled } from '../lib/subactions.js'
+  import { openAdd, ui } from '../lib/ui.svelte.js'
+  import Icon from '../components/Icon.svelte'
+  import SearchField from '../components/SearchField.svelte'
+  import SelectField from '../components/SelectField.svelte'
+  import SubscriptionRow from '../components/SubscriptionRow.svelte'
 
   /** @type {Loader<{ items: Subscription[] }>} */
   const subs = new Loader()
-  let adding = $state(false)
+  let query = $state('')
+  let kind = $state('')
+  let policy = $state('')
+  let status = $state('')
 
-  const anyChecking = $derived(subs.data?.items.some((s) => s.checking) ?? false)
+  const all = $derived(subs.data?.items ?? [])
+  const problems = $derived(all.filter(hasProblem))
+  const checking = $derived(all.some((s) => s.checking))
+  const list = $derived(
+    all.filter((s) => {
+      if (query.trim() && !s.title.toLowerCase().includes(query.trim().toLowerCase())) return false
+      if (kind && s.kind !== kind) return false
+      if (policy && s.download_policy !== policy) return false
+      if (status === 'on' && !s.enabled) return false
+      if (status === 'off' && s.enabled) return false
+      if (status === 'problems' && !hasProblem(s)) return false
+      return true
+    })
+  )
+  const filtered = $derived(Boolean(query.trim() || kind || policy || status))
 
-  /** @param {boolean} [quiet] */
-  function load(quiet = false) {
-    return subs.run(() => api.subscriptions.list(), { quiet })
+  /** @param {Subscription} s */
+  function hasProblem(s) {
+    return s.counts.failed > 0 || s.last_check?.status === 'failed'
   }
 
-  onMount(() => {
-    load()
+  $effect(() => {
+    void ui.subscriptionsVersion
+    void queue.signature
+    untrack(() => subs.run(() => api.subscriptions.list(), { quiet: !!subs.data }))
   })
 
   $effect(() => {
-    if (anyChecking) return poll(() => load(true), 3000, { immediate: false })
+    if (!checking) return
+    return poll(() => subs.run(() => api.subscriptions.list(), { quiet: true }), 3000, { immediate: false })
   })
 
-  /** @param {Subscription} updated */
-  function replace(updated) {
-    const items = subs.data?.items
-    if (!items) return
-    const i = items.findIndex((s) => s.id === updated.id)
-    if (i !== -1) items[i] = updated
-    else items.unshift(updated)
+  /** @param {Subscription} sub @param {boolean} enabled */
+  async function toggle(sub, enabled) {
+    await setEnabled(sub, enabled)
+    await subs.run(() => api.subscriptions.list(), { quiet: true })
   }
 
-  /** @param {number} id */
-  function removeItem(id) {
-    const items = subs.data?.items
-    if (!items) return
-    const i = items.findIndex((s) => s.id === id)
-    if (i !== -1) items.splice(i, 1)
+  /** @param {Subscription} sub @param {boolean} full */
+  async function check(sub, full) {
+    if (await checkNow(sub, full)) await subs.run(() => api.subscriptions.list(), { quiet: true })
+  }
+
+  /** @param {Subscription} sub */
+  async function remove(sub) {
+    if (await removeSubscription(sub)) await subs.run(() => api.subscriptions.list(), { quiet: true })
   }
 </script>
 
@@ -51,112 +72,84 @@
   <title>Subscriptions · YouHoard</title>
 </svelte:head>
 
-<div class="page-head">
-  <div class="cluster">
-    <h1 class="page-title">Subscriptions</h1>
-    {#if subs.data}<span class="muted">{plural(subs.data.items.length, 'subscription')}</span>{/if}
+<header class="ph">
+  <h1>Subscriptions</h1>
+  <div class="ph-r">
+    <button type="button" class="btn" onclick={() => openAdd()}><Icon name="plus" />Add subscription</button>
   </div>
-  <button type="button" class="btn btn-primary" onclick={() => (adding = true)}>Add subscription</button>
+</header>
+
+<div class="toolbar" style="padding-bottom: 10px">
+  <SearchField label="Filter subscriptions" placeholder="Filter sources" bind:value={query} />
+  <div class="filters">
+    <SelectField
+      label="Kind"
+      value={kind}
+      options={[
+        { value: '', label: 'All' },
+        { value: 'channel', label: 'Channels' },
+        { value: 'playlist', label: 'Playlists' }
+      ]}
+      onchange={(value) => (kind = value)}
+    />
+    <SelectField
+      label="Policy"
+      value={policy}
+      options={[
+        { value: '', label: 'Any' },
+        { value: 'none', label: 'Track only' },
+        { value: 'new', label: 'New uploads' },
+        { value: 'recent', label: 'Latest N' },
+        { value: 'all', label: 'Everything' }
+      ]}
+      onchange={(value) => (policy = value)}
+    />
+    <SelectField
+      label="State"
+      value={status}
+      options={[
+        { value: '', label: `Any (${all.length})` },
+        { value: 'on', label: `Enabled (${all.filter((s) => s.enabled).length})` },
+        { value: 'off', label: `Paused (${all.filter((s) => !s.enabled).length})` },
+        { value: 'problems', label: `Has problems (${problems.length})` }
+      ]}
+      onchange={(value) => (status = value)}
+    />
+  </div>
 </div>
 
 {#if subs.error}
-  <div class="form-error error-bar" role="alert">
-    <span>{subs.error}</span>
-    <button type="button" class="btn btn-secondary btn-sm" onclick={() => load()}>Try again</button>
+  <div class="empty"><b>Couldn't load subscriptions</b>{subs.error}</div>
+{:else if subs.data && all.length === 0}
+  <div class="empty">
+    <b>No subscriptions yet</b>
+    <button type="button" class="btn" onclick={() => openAdd()}><Icon name="plus" />Add a channel or playlist</button>
   </div>
-{/if}
-
-{#if subs.data}
-  {#if subs.data.items.length === 0}
-    <div class="empty">
-      No subscriptions yet. Subscribe to a channel or playlist to track it and download new uploads automatically.
-    </div>
-  {:else}
-    <div class="sub-grid">
-      {#each subs.data.items as sub (sub.id)}
-        <article class="panel sub" class:paused={!sub.enabled} aria-labelledby="sub-{sub.id}-title">
-          <div class="sub-head">
-            <h2 id="sub-{sub.id}-title" class="sub-title"><a href="#/subscriptions/{sub.id}">{sub.title}</a></h2>
-            <div class="cluster">
-              <span class="badge badge-info">{sub.kind}</span>
-              <span class="badge" title={POLICIES[sub.download_policy]?.help}>
-                {policySummary(sub.download_policy, sub.recent_count)}
-              </span>
-              {#if !sub.enabled}<span class="badge badge-muted">Paused</span>{/if}
-            </div>
-          </div>
-
-          <p class="dots muted small">
-            {#if sub.kind === 'playlist' && sub.owner_name}<span>by {sub.owner_name}</span>{/if}
-            {#if sub.channel}
-              <a href={href('/', { channel: sub.channel.id })}>
-                {sub.kind === 'channel' ? 'Show videos' : sub.channel.name}
-              </a>
-            {/if}
-            {#if sub.kind === 'channel'}
-              <span>{sub.content_types.map((t) => CONTENT_TYPES[t] ?? t).join(', ') || 'No content types'}</span>
-            {/if}
-            <span>{sub.quality ? qualityLabel(sub.quality) : 'Default quality'}</span>
-            <span>{interval(sub.check_interval_hours)}</span>
-          </p>
-
-          <div class="counts">
-            <span><strong>{int(sub.counts.entries)}</strong> entries</span>
-            <span><strong>{int(sub.counts.archived)}</strong> archived</span>
-            <span><strong>{int(sub.counts.queued)}</strong> queued</span>
-            <span class:error-text={sub.counts.failed > 0}><strong>{int(sub.counts.failed)}</strong> failed</span>
-            <span><strong>{int(sub.counts.not_selected)}</strong> not selected</span>
-            <span><strong>{int(sub.counts.removed)}</strong> removed</span>
-          </div>
-
-          <CheckStatus {sub} />
-          <SubscriptionActions {sub} onupdate={replace} ondeleted={() => removeItem(sub.id)} />
-        </article>
+{:else if subs.data && list.length === 0}
+  <div class="empty"><b>No matches</b>No subscriptions match these filters.</div>
+{:else if subs.data}
+  <table class="tbl subs stack">
+    <thead>
+      <tr>
+        <th class="c-src">Source</th>
+        <th class="c-pol">Policy</th>
+        <th class="c-hold">Archived</th>
+        <th class="c-last">Last check</th>
+        <th class="c-next">Next</th>
+        <th class="c-on">On</th>
+        <th class="c-act"><span class="sr">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {#each list as sub (sub.id)}
+        <SubscriptionRow
+          {sub}
+          ontoggle={(enabled) => toggle(sub, enabled)}
+          oncheck={(full) => check(sub, full)}
+          onremove={() => remove(sub)}
+        />
       {/each}
-    </div>
-  {/if}
-{:else if subs.loading}
-  <p class="loading-line"><span class="spinner"></span> Loading subscriptions…</p>
+    </tbody>
+  </table>
+  {#if filtered}<p class="tfoot">{list.length} of {all.length} sources shown</p>{/if}
 {/if}
-
-{#if adding}
-  <AddSubscriptionDialog onclose={() => (adding = false)} oncreated={replace} />
-{/if}
-
-<style>
-  .sub-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
-    gap: var(--space-3);
-  }
-
-  .sub {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-
-  .sub:hover {
-    border-color: var(--terminal-green);
-    box-shadow: var(--glow-primary);
-  }
-
-  .sub.paused {
-    border-style: dashed;
-  }
-
-  .sub-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-1) var(--space-3);
-  }
-
-  .sub-title {
-    font-size: 0.95rem;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-</style>

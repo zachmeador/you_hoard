@@ -1,15 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#110e0b" />
     <title>YouHoard</title>
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0a0a'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='20' font-weight='700' text-anchor='middle' fill='%2300ff88'%3EY%3C/text%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cg fill='%23d6a84e'%3E%3Cpath d='M9 1l4.5 4.5h-9z'/%3E%3Cpath d='M3 7h12l2 2-2 2H3L1 9z'/%3E%3Cpath d='M4.5 12.5h9L9 17z'/%3E%3C/g%3E%3C/svg%3E"
     />
+    <script>
+      try {
+        const theme = localStorage.getItem('yh-theme')
+        if (theme === 'light' || theme === 'dark') {
+          document.documentElement.dataset.theme = theme
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute('content', theme === 'light' ? '#f8f4ef' : '#110e0b')
+        }
+      } catch {
+        // storage can be unavailable; the default theme applies
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

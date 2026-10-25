@@ -117,17 +117,33 @@ export const api = {
      */
     get: (id) => request('GET', `/videos/${id}`),
     /**
+     * @param {Omit<T.VideoQuery, 'status' | 'sort' | 'order' | 'page' | 'per_page' | 'unavailable'>} query
+     * @returns {Promise<T.VideoCounts>}
+     */
+    counts: (query) => request('GET', '/videos/counts' + qs({ ...query })),
+    /**
      * @param {string} url
-     * @param {string} [quality]
+     * @param {T.VideoOptions} [options]
      * @returns {Promise<T.Video>}
      */
-    add: (url, quality) => request('POST', '/videos', { url, quality: quality || undefined }),
+    add: (url, options = {}) => request('POST', '/videos', { url, ...options }),
     /**
      * @param {number} id
-     * @param {string} [quality]
+     * @param {T.VideoOptions} [options]
      * @returns {Promise<{ job_id: number }>}
      */
-    download: (id, quality) => request('POST', `/videos/${id}/download`, quality ? { quality } : {}),
+    download: (id, options = {}) => request('POST', `/videos/${id}/download`, options),
+    /**
+     * @param {number} id
+     * @param {{ sort?: 'top' | 'new', page?: number, per_page?: number }} query
+     * @returns {Promise<T.CommentPage>}
+     */
+    comments: (id, query) => request('GET', `/videos/${id}/comments` + qs(query)),
+    /**
+     * @param {number} id
+     * @returns {Promise<{ items: T.ChatMessage[] }>}
+     */
+    chat: (id) => request('GET', `/videos/${id}/chat`),
     /**
      * @param {number} id
      * @returns {Promise<{ ok: boolean }>}
@@ -143,7 +159,7 @@ export const api = {
 
   channels: {
     /**
-     * @param {{ q?: string, page?: number, per_page?: number }} query
+     * @param {{ q?: string, sort?: 'name' | 'size' | 'videos', page?: number, per_page?: number }} query
      * @returns {Promise<T.Page<T.Channel>>}
      */
     list: (query) => request('GET', '/channels' + qs(query)),

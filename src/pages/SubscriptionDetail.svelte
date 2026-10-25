@@ -1,48 +1,54 @@
 <script>
-  /** @import { Entry, Page, Subscription, SubscriptionCounts, Video } from '../lib/types' */
-  import { onMount, untrack } from 'svelte'
+  /** @import { Overrides } from '../lib/overrides.js' */
+  /** @import { DownloadPolicy, Entry, Page, Subscription, VideoType } from '../lib/types' */
+  import { untrack } from 'svelte'
   import { api } from '../lib/api.js'
-  import {
-    CONTENT_TYPES,
-    POLICIES,
-    STATUS,
-    VIDEO_TYPES,
-    duration,
-    int,
-    interval,
-    languages,
-    plural,
-    policySummary,
-    qualityLabel
-  } from '../lib/format.js'
+  import { dmy, int, interval, rel, whenShort } from '../lib/format.js'
+  import { ENTRIES_PER_PAGE, loadEntries } from '../lib/entries.js'
   import { Loader } from '../lib/loader.svelte.js'
+  import { overridesOf, subscriptionOverrides } from '../lib/overrides.js'
   import { poll } from '../lib/poll.js'
   import { queue } from '../lib/queue.svelte.js'
   import { href, navigate, pageParam, router, updateQuery } from '../lib/router.svelte.js'
+  import { librarySettings } from '../lib/settings.svelte.js'
+  import { checkNow, removeSubscription, setEnabled } from '../lib/subactions.js'
   import { notify } from '../lib/toasts.svelte.js'
-  import CheckStatus from '../components/CheckStatus.svelte'
-  import Pagination from '../components/Pagination.svelte'
-  import SearchBox from '../components/SearchBox.svelte'
-  import StatusBadge from '../components/StatusBadge.svelte'
-  import SubscriptionActions from '../components/SubscriptionActions.svelte'
-  import Time from '../components/Time.svelte'
-  import VideoDialog from '../components/VideoDialog.svelte'
+  import { clock, subscriptionsChanged, ui } from '../lib/ui.svelte.js'
+  import Avatar from '../components/Avatar.svelte'
+  import FieldSelect from '../components/FieldSelect.svelte'
+  import FilterTabs from '../components/FilterTabs.svelte'
+  import HoldBar from '../components/HoldBar.svelte'
+  import Icon from '../components/Icon.svelte'
+  import InventoryTable from '../components/InventoryTable.svelte'
+  import LastCheck from '../components/LastCheck.svelte'
+  import OverrideFields from '../components/OverrideFields.svelte'
+  import Pager from '../components/Pager.svelte'
+  import PolicyFields from '../components/PolicyFields.svelte'
+  import SearchField from '../components/SearchField.svelte'
+  import SelectField from '../components/SelectField.svelte'
+
+  /**
+   * @typedef {{
+   *   policy: DownloadPolicy,
+   *   recentCount: number,
+   *   types: VideoType[],
+   *   interval: number,
+   *   overrides: Overrides
+   * }} Draft
+   */
 
   /** @type {{ id: number }} */
   let { id } = $props()
 
-  const PER_PAGE = 50
-  const ENTRY_STATUSES = ['not_selected', 'missing', 'queued', 'downloading', 'archived', 'failed', 'deleted']
-  const DOWNLOADABLE = ['not_selected', 'missing', 'failed']
-  /** @type {[keyof SubscriptionCounts, string, string | null][]} */
-  const COUNT_FILTERS = [
-    ['entries', 'entries', ''],
-    ['archived', 'archived', 'archived'],
-    ['queued', 'queued', 'queued'],
-    ['failed', 'failed', 'failed'],
-    ['not_selected', 'not selected', 'not_selected'],
-    ['removed', 'removed from source', null]
-  ]
+  /** @type {Loader<Subscription>} */
+  const sub = new Loader()
+  /** @type {Loader<Page<Entry>>} */
+  const entries = new Loader()
+  let draft = $state(/** @type {Draft | null} */ (null))
+  let dirty = $state(false)
+  let saving = $state(false)
+  let busyEntry = $state('')
+  let search = $state(untrack(() => router.query.q ?? ''))
 
   const filters = $derived({
     status: router.query.status ?? '',
@@ -50,61 +56,139 @@
     q: router.query.q ?? '',
     page: pageParam(router.query.page)
   })
-  const search = $derived(filters.q)
-
-  /** @type {Loader<Subscription>} */
-  const sub = new Loader()
-  /** @type {Loader<Page<Entry>>} */
-  const entries = new Loader()
-  /** @type {number | null} */
-  let openVideoId = $state(null)
-  let busyEntry = $state('')
-  let wasChecking = false
-
-  const checking = $derived(Boolean(sub.data?.checking))
-  const active = $derived(
-    checking || (entries.data?.items.some((e) => e.status === 'queued' || e.status === 'downloading') ?? false)
+  const s = $derived(sub.data)
+  const items = $derived(entries.data?.items ?? [])
+  const pages = $derived(Math.max(1, Math.ceil((entries.data?.total ?? 0) / ENTRIES_PER_PAGE)))
+  const intervals = $derived.by(() => {
+    const hours = librarySettings.options.check_intervals
+    const all = draft && !hours.includes(draft.interval) ? [...hours, draft.interval].sort((a, b) => a - b) : hours
+    return all.map((h) => ({ value: h, label: interval(h) }))
+  })
+  const valid = $derived(!draft || s?.kind !== 'channel' || draft.types.length > 0)
+  const tabs = $derived(
+    s
+      ? [
+          { value: '', label: 'All', count: s.counts.entries },
+          { value: 'archived', label: 'Archived', count: s.counts.archived },
+          { value: 'queued', label: 'Queued', count: s.counts.queued },
+          { value: 'failed', label: 'Failed', count: s.counts.failed },
+          { value: 'not_selected', label: 'Not selected', count: s.counts.not_selected },
+          { value: 'removed', label: 'Removed from source', count: s.counts.removed, gone: true }
+        ]
+      : []
   )
 
-  /** @param {boolean} [quiet] */
-  function loadSub(quiet = false) {
+  /** @param {Subscription} subscription @returns {Draft} */
+  function draftOf(subscription) {
+    return {
+      policy: subscription.download_policy,
+      recentCount: subscription.recent_count,
+      types: [...subscription.content_types],
+      interval: subscription.check_interval_hours,
+      overrides: overridesOf(subscription)
+    }
+  }
+
+  function loadSub(quiet = true) {
     return sub.run(() => api.subscriptions.get(id), { quiet })
   }
 
-  /** @param {typeof filters} f */
-  function fetchEntries(f) {
-    return api.subscriptions.entries(id, {
-      status: f.status,
-      video_type: f.type,
-      q: f.q,
-      page: f.page,
-      per_page: PER_PAGE
-    })
+  /** @param {boolean} quiet */
+  function loadList(quiet) {
+    const f = filters
+    return entries.run(() => loadEntries(id, f), { quiet })
   }
 
-  function refreshEntries() {
-    return entries.run(() => fetchEntries(filters), { quiet: true })
-  }
-
-  onMount(() => {
-    loadSub()
-  })
-
+  let lastKey = ''
   $effect(() => {
     const f = filters
-    untrack(() => entries.run(() => fetchEntries(f)))
+    const version = ui.subscriptionsVersion
+    void queue.signature
+    const key = JSON.stringify(f) + version
+    untrack(() => {
+      const quiet = key === lastKey
+      lastKey = key
+      sub.run(() => api.subscriptions.get(id), { quiet: !!sub.data })
+      entries.run(() => loadEntries(id, f), { quiet })
+    })
   })
 
   $effect(() => {
-    if (!active) return
-    return poll(() => Promise.all([loadSub(true), refreshEntries()]), 3000, { immediate: false })
+    if (!s?.checking) return
+    return poll(() => Promise.all([loadSub(true), loadList(true)]), 3000, { immediate: false })
   })
 
   $effect(() => {
-    const now = checking
-    if (wasChecking && !now) untrack(refreshEntries)
-    wasChecking = now
+    const current = sub.data
+    if (current && !dirty) untrack(() => (draft = draftOf(current)))
   })
+
+  $effect(() => {
+    const external = router.query.q ?? ''
+    untrack(() => {
+      if (external !== search.trim()) search = external
+    })
+  })
+
+  $effect(() => {
+    const value = search.trim()
+    const timer = setTimeout(() => {
+      if (value !== (router.query.q ?? '')) updateQuery({ q: value })
+    }, 250)
+    return () => clearTimeout(timer)
+  })
+
+  function markDirty() {
+    dirty = true
+  }
+
+  function discard() {
+    if (sub.data) draft = draftOf(sub.data)
+    dirty = false
+  }
+
+  async function save() {
+    const d = draft
+    const current = sub.data
+    if (!d || !current) return
+    saving = true
+    try {
+      const updated = await api.subscriptions.update(id, {
+        download_policy: d.policy,
+        recent_count: Math.min(1000, Math.max(1, Math.round(Number(d.recentCount) || 1))),
+        ...(current.kind === 'channel' ? { content_types: d.types } : {}),
+        check_interval_hours: d.interval,
+        ...subscriptionOverrides(d.overrides)
+      })
+      sub.data = updated
+      dirty = false
+      draft = draftOf(updated)
+      notify.success('Subscription saved')
+      subscriptionsChanged()
+    } catch (e) {
+      notify.error(e)
+    } finally {
+      saving = false
+    }
+  }
+
+  /** @param {boolean} enabled */
+  async function toggle(enabled) {
+    if (!s) return
+    const updated = await setEnabled(s, enabled)
+    if (updated) sub.data = updated
+    else await loadSub()
+  }
+
+  /** @param {boolean} full */
+  async function check(full) {
+    if (!s) return
+    if (await checkNow(s, full)) await loadSub()
+  }
+
+  async function remove() {
+    if (s && (await removeSubscription(s))) navigate('/subscriptions')
+  }
 
   /** @param {Entry} entry */
   async function downloadEntry(entry) {
@@ -115,7 +199,7 @@
       entry.video_id = res.video_id
       notify.success(`Queued “${entry.title ?? entry.youtube_id}”`)
       queue.refresh().catch(() => {})
-      loadSub(true)
+      loadSub()
     } catch (e) {
       notify.error(e)
     } finally {
@@ -123,269 +207,149 @@
     }
   }
 
-  /** @param {Video} video */
-  function videoChanged(video) {
-    const entry = entries.data?.items.find((e) => e.video_id === video.id)
-    if (entry) entry.status = video.status
-  }
-
-  /** @param {Event & { currentTarget: HTMLSelectElement }} event */
-  function selectValue(event) {
-    return event.currentTarget.value
+  /** @param {number} page */
+  function goTo(page) {
+    updateQuery({ page: page > 1 ? page : null })
+    window.scrollTo({ top: 0 })
   }
 </script>
 
 <svelte:head>
-  <title>{sub.data?.title ?? 'Subscription'} · YouHoard</title>
+  <title>{s ? `${s.title} · ` : ''}YouHoard</title>
 </svelte:head>
 
-{#if sub.data}
-  {@const s = sub.data}
-  <header class="head">
-    <div class="page-head">
-      <h1 class="page-title">{s.title}</h1>
-      <div class="cluster">
-        <span class="badge badge-info">{s.kind}</span>
-        <span class="badge">{policySummary(s.download_policy, s.recent_count)}</span>
-        {#if !s.enabled}<span class="badge badge-muted">Paused</span>{/if}
+{#if sub.error && !s}
+  <div class="empty">
+    <b>{sub.error}</b>
+    <a class="lnk" href={href('/subscriptions')}>Back to subscriptions</a>
+  </div>
+{:else if s}
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href={href('/subscriptions')}>Subscriptions</a>
+    <span class="sep">/</span>
+    <span class="cur">{s.title}</span>
+  </nav>
+
+  <header class="sd-head">
+    <div class="who">
+      <Avatar name={s.title} src={s.channel?.avatar_url} large playlist={s.kind === 'playlist'} />
+      <div style="min-width: 0">
+        <h1>{s.title}</h1>
+        <p class="meta">
+          <span>{s.kind === 'playlist' ? `Playlist by ${s.owner_name ?? 'unknown'}` : 'Channel'}</span>
+          <span class="mono">{s.youtube_id}</span>
+          <span>subscribed {dmy(s.created_at)}</span>
+          {#if s.channel}
+            <a class="lnk" href={href('/library', { channel: s.channel.id })}>Show in library</a>
+          {/if}
+          <a class="lnk" href={s.url} target="_blank" rel="noopener noreferrer">YouTube ↗</a>
+        </p>
       </div>
     </div>
-    <p class="dots muted small">
-      {#if s.owner_name}<span>by {s.owner_name}</span>{/if}
-      {#if s.channel}<a href={href('/', { channel: s.channel.id })}>Show videos</a>{/if}
-      <a href={s.url} target="_blank" rel="noopener noreferrer">Open on YouTube ↗</a>
-      <span>subscribed <Time value={s.created_at} /></span>
-    </p>
-    <SubscriptionActions
-      sub={s}
-      onupdate={(updated) => (sub.data = updated)}
-      ondeleted={() => navigate('/subscriptions')}
-    />
+    <div class="acts">
+      <label class="enabled">
+        <input type="checkbox" class="sw" checked={s.enabled} onchange={(event) => toggle(event.currentTarget.checked)} />
+        {s.enabled ? 'Enabled' : 'Paused'}
+      </label>
+      <button type="button" class="btn" disabled={s.checking} onclick={() => check(false)}>
+        <Icon name="refresh" />Check now
+      </button>
+      <button type="button" class="btn" disabled={s.checking} onclick={() => check(true)}>Full rescan</button>
+      <button type="button" class="btn danger" onclick={remove}><Icon name="trash" />Delete</button>
+    </div>
   </header>
 
-  <div class="overview">
-    <section class="panel" aria-labelledby="settings-title">
-      <h2 id="settings-title" class="section-title">Settings</h2>
-      <dl class="kv">
-        <dt>Policy</dt>
+  <div class="sd-grid">
+    <section aria-labelledby="pol-h">
+      <h2 class="label" id="pol-h">Download policy</h2>
+      {#if draft}
+        <PolicyFields
+          kind={s.kind}
+          bind:policy={draft.policy}
+          bind:recentCount={draft.recentCount}
+          bind:types={draft.types}
+          onchange={markDirty}
+        />
+        <div class="ovr">
+          <OverrideFields bind:value={draft.overrides} onchange={markDirty} />
+          <FieldSelect
+            label="Check interval"
+            value={draft.interval}
+            options={intervals}
+            onchange={(value) => {
+              if (draft) draft.interval = Number(value)
+              markDirty()
+            }}
+          />
+        </div>
+        <div class="savebar" class:on={dirty}>
+          <span>Unsaved changes</span>
+          <button type="button" class="btn sm quiet" onclick={discard}>Discard</button>
+          <button type="button" class="btn sm primary" disabled={saving || !valid} onclick={save}>Save</button>
+        </div>
+      {/if}
+    </section>
+    <section aria-labelledby="chk-h">
+      <h2 class="label" id="chk-h">Checks</h2>
+      <dl class="chk-block">
+        <dt>Last check</dt>
+        <dd><LastCheck sub={s} /></dd>
+        <dt>Next check</dt>
         <dd>
-          {POLICIES[s.download_policy]?.label ?? s.download_policy}{s.download_policy === 'recent'
-            ? ` (N = ${s.recent_count})`
-            : ''}
-          <span class="muted">· {POLICIES[s.download_policy]?.help}</span>
+          {#if !s.enabled}Paused
+          {:else if s.next_check_at}{whenShort(s.next_check_at, clock.now)} <span class="muted">({rel(s.next_check_at, clock.now)})</span>
+          {:else}—{/if}
         </dd>
-        {#if s.kind === 'channel'}
-          <dt>Content</dt>
-          <dd>{s.content_types.map((t) => CONTENT_TYPES[t] ?? t).join(', ') || 'None'}</dd>
-        {/if}
-        <dt>Quality</dt>
-        <dd>{s.quality ? qualityLabel(s.quality) : 'Library default'}</dd>
-        <dt>Subtitles</dt>
-        <dd>{s.subtitle_languages == null ? 'Library default' : languages(s.subtitle_languages)}</dd>
-        <dt>Comments</dt>
-        <dd>{s.download_comments == null ? 'Library default' : s.download_comments ? 'Download' : 'Skip'}</dd>
-        <dt>Checks</dt>
-        <dd>{interval(s.check_interval_hours)}</dd>
       </dl>
     </section>
-
-    <section class="panel stack" aria-labelledby="status-title">
-      <h2 id="status-title" class="section-title">Status</h2>
-      <CheckStatus sub={s} />
-      <div class="count-buttons" role="group" aria-label="Filter the inventory by status">
-        {#each COUNT_FILTERS as [key, label, status] (key)}
-          {#if status === null}
-            <span class="count-btn"><strong>{int(s.counts[key])}</strong> {label}</span>
-          {:else}
-            <button
-              type="button"
-              class="count-btn"
-              aria-pressed={filters.status === status}
-              onclick={() => updateQuery({ status })}
-            >
-              <strong>{int(s.counts[key])}</strong>
-              {label}
-            </button>
-          {/if}
-        {/each}
-      </div>
-    </section>
-  </div>
-{:else if sub.error}
-  <div class="form-error error-bar" role="alert">
-    <span>{sub.error}</span>
-    <button type="button" class="btn btn-secondary btn-sm" onclick={() => loadSub()}>Try again</button>
-  </div>
-{:else}
-  <p class="loading-line"><span class="spinner"></span> Loading subscription…</p>
-{/if}
-
-<section class="inventory" aria-labelledby="inventory-title">
-  <div class="page-head">
-    <h2 id="inventory-title" class="section-title">Inventory</h2>
-    {#if entries.data}<span class="muted small">{plural(entries.data.total, 'entry', 'entries')}</span>{/if}
   </div>
 
-  <div class="toolbar">
-    <SearchBox value={search} label="Search entries" placeholder="Search entries…" onsearch={(q) => updateQuery({ q })} />
-    <label class="sr-only" for="entry-status">Status</label>
-    <select id="entry-status" value={filters.status} onchange={(e) => updateQuery({ status: selectValue(e) })}>
-      <option value="">All statuses</option>
-      {#each ENTRY_STATUSES as status (status)}
-        <option value={status}>{STATUS[status].label}</option>
-      {/each}
-    </select>
-    <label class="sr-only" for="entry-type">Type</label>
-    <select id="entry-type" value={filters.type} onchange={(e) => updateQuery({ type: selectValue(e) })}>
-      <option value="">All types</option>
-      <option value="video">Videos</option>
-      <option value="short">Shorts</option>
-      <option value="live">Live</option>
-    </select>
+  <section class="holdings" aria-labelledby="hold-h">
+    <div class="head">
+      <h2 class="label" id="hold-h">Archived</h2>
+      <span class="muted"><b>{int(s.counts.archived)}</b> of {int(s.counts.entries)} entries</span>
+    </div>
+    <HoldBar counts={s.counts} big />
+    <div class="legend">
+      <span><i></i>Archived</span>
+      <span><i class="g"></i>Archived, removed from source</span>
+      <span><i class="q"></i>Queued</span>
+      <span><i class="f"></i>Failed</span>
+      {#if s.counts.deleted}<span><i class="d"></i>Files removed</span>{/if}
+      <span><i class="n"></i>Not selected</span>
+    </div>
+    <FilterTabs
+      class="inv-tabs"
+      label="Filter entries"
+      value={filters.status}
+      {tabs}
+      onchange={(value) => updateQuery({ status: value })}
+    />
+  </section>
+
+  <div class="toolbar" style="padding: 10px 0 4px">
+    <SearchField label="Search entries" placeholder="Search entries" bind:value={search} />
+    <div class="filters">
+      <SelectField
+        label="Type"
+        value={filters.type}
+        options={[
+          { value: '', label: 'All' },
+          { value: 'video', label: 'Videos' },
+          { value: 'short', label: 'Shorts' },
+          { value: 'live', label: 'Streams' }
+        ]}
+        onchange={(value) => updateQuery({ type: value })}
+      />
+    </div>
   </div>
 
   {#if entries.error}
-    <div class="form-error error-bar" role="alert">
-      <span>{entries.error}</span>
-      <button type="button" class="btn btn-secondary btn-sm" onclick={() => entries.run(() => fetchEntries(filters))}>
-        Try again
-      </button>
-    </div>
+    <div class="empty"><b>Couldn't load entries</b>{entries.error}</div>
+  {:else if entries.data && items.length === 0}
+    <div class="empty"><b>No matches</b>No entries match these filters.</div>
+  {:else if entries.data}
+    <InventoryTable entries={items} kind={s.kind} busy={busyEntry} ondownload={downloadEntry} />
+    <Pager label="Inventory pages" page={filters.page} {pages} onpage={goTo} />
   {/if}
-
-  {#if entries.data}
-    {#if entries.data.items.length === 0}
-      <div class="empty">
-        {filters.status || filters.type || filters.q
-          ? 'No entries match these filters.'
-          : checking
-            ? 'Listing the source… entries appear as the check runs.'
-            : 'No entries yet. Run a check to list what the source has.'}
-      </div>
-    {:else}
-      <ul class="rows" class:stale={entries.loading}>
-        {#each entries.data.items as entry (entry.youtube_id)}
-          {@const title = entry.title ?? entry.youtube_id}
-          {@const titleId = `entry-${entry.youtube_id}`}
-          <li class="row entry" class:gone={!!entry.removed_at}>
-            <span class="pos muted small">#{entry.position}</span>
-            <div class="grow">
-              {#if entry.video_id}
-                {@const videoId = entry.video_id}
-                <button type="button" class="link-btn entry-title" id={titleId} onclick={() => (openVideoId = videoId)}>
-                  {title}
-                </button>
-              {:else}
-                <span class="entry-title" id={titleId}>{title}</span>
-              {/if}
-              <div class="dots muted small">
-                {#if entry.video_type !== 'video'}<span>{VIDEO_TYPES[entry.video_type]}</span>{/if}
-                {#if entry.duration}<span>{duration(entry.duration)}</span>{/if}
-                {#if entry.live_status && entry.live_status !== 'not_live'}
-                  <span>{entry.live_status.replaceAll('_', ' ')}</span>
-                {/if}
-                <span>seen <Time value={entry.first_seen_at} /></span>
-                {#if entry.removed_at}
-                  <span class="warn-text">removed from source <Time value={entry.removed_at} /></span>
-                {/if}
-              </div>
-            </div>
-            <div class="entry-actions">
-              <StatusBadge status={entry.status} />
-              {#if DOWNLOADABLE.includes(entry.status)}
-                <button
-                  type="button"
-                  class="btn btn-secondary btn-sm"
-                  aria-describedby={titleId}
-                  disabled={busyEntry === entry.youtube_id}
-                  onclick={() => downloadEntry(entry)}
-                >
-                  Download
-                </button>
-              {/if}
-              <a
-                class="ext-link"
-                href="https://www.youtube.com/watch?v={encodeURIComponent(entry.youtube_id)}"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Open {title} on YouTube">↗</a
-              >
-            </div>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <Pagination
-      page={filters.page}
-      total={entries.data.total}
-      perPage={entries.data.per_page || PER_PAGE}
-      label="Inventory pages"
-      onpage={(page) => updateQuery({ page: page > 1 ? page : null })}
-    />
-  {:else if entries.loading}
-    <p class="loading-line"><span class="spinner"></span> Loading inventory…</p>
-  {/if}
-</section>
-
-{#if openVideoId}
-  <VideoDialog id={openVideoId} onchange={videoChanged} onclose={() => (openVideoId = null)} />
 {/if}
-
-<style>
-  .head {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    margin-bottom: var(--space-4);
-  }
-
-  .head .page-head {
-    margin-bottom: 0;
-  }
-
-  .overview {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
-    gap: var(--space-3);
-    margin-bottom: var(--space-6);
-  }
-
-  .overview .section-title {
-    margin-bottom: var(--space-2);
-  }
-
-  .entry {
-    flex-wrap: wrap;
-  }
-
-  .entry .grow {
-    flex-basis: 220px;
-  }
-
-  .entry.gone .entry-title {
-    text-decoration: line-through;
-    text-decoration-color: var(--text-muted);
-  }
-
-  .pos {
-    min-width: 2.75rem;
-  }
-
-  .entry-title {
-    display: block;
-    overflow-wrap: anywhere;
-  }
-
-  .entry-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    margin-left: auto;
-  }
-
-  @media (max-width: 640px) {
-    .entry-actions {
-      margin-left: calc(2.75rem + var(--space-3));
-    }
-  }
-</style>
