@@ -98,6 +98,15 @@ def test_art_already_in_the_folder_is_never_replaced(archive):
     assert channel_of(archive, sub)["avatar_url"]
 
 
+def test_a_folder_that_cannot_be_written_never_fails_the_check(archive):
+    folder(archive).write_text("in the way")
+    seed_tab(archive, "video", ids("vid", 2))
+    sub = subscribe(archive, download_policy="none")
+    assert sub["last_check"]["status"] == "completed"
+    assert sub["last_check"]["result"]["listed"] == 2
+    assert channel_of(archive, sub)["avatar_url"] is None
+
+
 def test_a_rescan_links_art_and_forgets_art_that_is_gone(archive):
     seed_tab(archive, "video", ids("vid", 1))
     sub = subscribe(archive, download_policy="none")
