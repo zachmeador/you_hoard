@@ -158,6 +158,8 @@ def test_resolve_create_and_validation(archive):
     client = archive.client
     resolved = client.post("/api/subscriptions/resolve", json={"url": CHANNEL_URL + "/videos"})
     assert resolved.json()["existing_subscription_id"] is None
+    assert resolved.json()["channel_handle"] == "@fixture"
+    assert resolved.json()["subscriber_count"] == 1234
     sub = subscribe(archive, enabled=False)
     assert sub["next_check_at"] is None and sub["last_check"] is None
     again = client.post("/api/subscriptions/resolve", json={"url": CHANNEL_URL}).json()
@@ -198,3 +200,64 @@ def test_streams_that_air_after_subscribing_count_as_new(archive):
     archive.youtube.videos[stream].live_status = "was_live"
     check(archive, sub)
     assert library(archive)[stream]["status"] == "archived"
+
+
+def test_inventory_entries_carry_views_and_the_uploader(archive):
+    first, second = ids("pla", 2)
+    archive.youtube.add(first, view_count=1500)
+    archive.youtube.add(second, channel_id=OTHER_CHANNEL_ID, channel="Someone Else", view_count=77)
+    archive.youtube.playlist = [first, second]
+    sub = subscribe(archive, PLAYLIST_URL)
+    url = f"/api/subscriptions/{sub['id']}/entries"
+
+    def inventory():
+        items = archive.client.get(url).json()["items"]
+        return [(e["youtube_id"], e["channel_name"], e["view_count"]) for e in items]
+
+    assert inventory() == [(first, "Fixture Channel", 1500), (second, "Someone Else", 77)]
+    archive.youtube.videos[second].view_count = 90
+    check(archive, sub)
+    assert inventory() == [(first, "Fixture Channel", 1500), (second, "Someone Else", 90)]
+
+
+def test_channel_inventories_show_views_under_the_channels_own_name(archive):
+    seed_tab(archive, "video", ids("vid", 2))
+    archive.youtube.videos[ids("vid", 2)[0]].view_count = 4200
+    sub = subscribe(archive)
+    entries = archive.client.get(f"/api/subscriptions/{sub['id']}/entries").json()["items"]
+    assert [(e["channel_name"], e["view_count"]) for e in entries] == [
+        ("Fixture Channel", 4200),
+        ("Fixture Channel", 1000),
+    ]
+
+
+def test_queued_playlist_videos_show_their_channel_before_they_download(archive):
+    first = ids("pla", 1)[0]
+    archive.youtube.add(first, channel_id=OTHER_CHANNEL_ID, channel="Someone Else")
+    archive.youtube.playlist = [first]
+    sub = subscribe(archive, PLAYLIST_URL)
+    runner = archive.app.state.runner
+    archive.call(runner.stop)
+    queued = archive.client.post(f"/api/subscriptions/{sub['id']}/entries/{first}/download").json()
+    video = archive.client.get(f"/api/videos/{queued['video_id']}").json()
+    assert video["status"] == "queued"
+    assert video["channel"]["name"] == "Someone Else"
+    assert video["channel"]["youtube_id"] == OTHER_CHANNEL_ID
+    archive.call(runner.start)
+    archive.wait_job(queued["job_id"])
+
+
+def test_playlist_downloads_queued_by_policy_also_know_their_channel(archive):
+    first = ids("pla", 1)[0]
+    archive.youtube.add(first, channel_id=OTHER_CHANNEL_ID, channel="Someone Else")
+    archive.youtube.playlist = [first]
+    archive.youtube.hold.set()
+    response = archive.client.post(
+        "/api/subscriptions", json={"url": PLAYLIST_URL, "download_policy": "all"}
+    )
+    assert response.status_code == 201
+    videos = archive.wait(lambda: archive.client.get("/api/videos").json()["items"])
+    assert videos[0]["status"] in ("queued", "downloading")
+    assert videos[0]["channel"]["name"] == "Someone Else"
+    archive.youtube.hold.clear()
+    archive.wait_idle()

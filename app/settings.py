@@ -7,7 +7,11 @@ from app.db import Database, dumps, loads
 DEFAULTS: dict[str, Any] = {
     "default_quality": "1080p",
     "subtitle_languages": ["en"],
+    "auto_captions": True,
     "download_comments": False,
+    "audio_languages": [],
+    "live_chat": False,
+    "sponsorblock": False,
     "max_concurrent_downloads": 2,
     "check_interval_hours": 6,
 }

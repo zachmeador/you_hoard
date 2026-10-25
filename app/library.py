@@ -7,7 +7,17 @@ from typing import Any
 
 import aiosqlite
 
-from app.db import fetch_one, now
+from app.db import dumps, fetch_one, from_timestamp, now
+from app.tracks import file_audio_languages, file_codecs
+
+AVAILABILITIES = {
+    "public",
+    "unlisted",
+    "private",
+    "needs_auth",
+    "subscriber_only",
+    "premium_only",
+}
 
 VIDEO_SELECT = """
 SELECT v.*, s.status, s.job_id, s.job_status, s.job_error,
@@ -41,14 +51,40 @@ INFO_DROP = {
 
 
 def published_at(info: dict[str, Any]) -> str | None:
+    """YYYY-MM-DDTHH:MM:SSZ when YouTube gives the exact upload time, else YYYY-MM-DD."""
+    timestamp = info.get("timestamp")
+    if isinstance(timestamp, int | float) and not isinstance(timestamp, bool):
+        try:
+            return from_timestamp(timestamp)
+        except (OverflowError, OSError, ValueError):
+            pass
     for key in ("upload_date", "release_date"):
         value = str(info.get(key) or "")
         if len(value) == 8 and value.isdigit():
             return f"{value[:4]}-{value[4:6]}-{value[6:]}"
-    for key in ("timestamp", "release_timestamp"):
-        if isinstance(info.get(key), int | float):
-            return datetime.fromtimestamp(info[key], UTC).date().isoformat()
+    if isinstance(info.get("release_timestamp"), int | float):
+        return datetime.fromtimestamp(info["release_timestamp"], UTC).date().isoformat()
     return None
+
+
+def _number(value: Any, kind: type = int) -> Any:
+    if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+        return kind(value)
+    return None
+
+
+def archive_facts(info: dict[str, Any]) -> dict[str, Any]:
+    """Facts about a downloaded file, from the final yt-dlp info or from our own sidecar."""
+    own = info.get("_youhoard") or {}
+    vcodec, acodec = file_codecs(info)
+    return {
+        "fps": _number(info.get("fps"), float),
+        "vcodec": vcodec,
+        "acodec": acodec or own.get("acodec"),
+        "dynamic_range": info.get("dynamic_range") or None,
+        "audio_languages": own.get("audio_languages") or file_audio_languages(info),
+        "subtitle_tracks": own.get("subtitles"),
+    }
 
 
 def classify(info: dict[str, Any]) -> str:
@@ -85,19 +121,31 @@ async def upsert_channel(
     handle: str | None = None,
     description: str | None = None,
     subscriber_count: int | None = None,
+    verified: bool | None = None,
 ) -> int:
     row = await fetch_one(
         conn,
-        """INSERT INTO channels (youtube_id, name, handle, description, subscriber_count)
-           VALUES (?, ?, ?, ?, ?)
+        """INSERT INTO channels (youtube_id, name, handle, description, subscriber_count, verified)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT (youtube_id) DO UPDATE SET
                name = coalesce(?, name),
                handle = coalesce(excluded.handle, handle),
                description = coalesce(excluded.description, description),
                subscriber_count = coalesce(excluded.subscriber_count, subscriber_count),
+               verified = coalesce(?, verified),
                updated_at = ?
            RETURNING id""",
-        (youtube_id, name or youtube_id, handle, description, subscriber_count, name, now()),
+        (
+            youtube_id,
+            name or youtube_id,
+            handle,
+            description,
+            subscriber_count,
+            bool(verified),
+            name,
+            None if verified is None else int(verified),
+            now(),
+        ),
     )
     return row["id"]
 
@@ -113,6 +161,7 @@ async def channel_from_info(conn: aiosqlite.Connection, info: dict[str, Any]) ->
         info.get("channel") or info.get("uploader"),
         handle=handle if isinstance(handle, str) and handle.startswith("@") else None,
         subscriber_count=info.get("channel_follower_count"),
+        verified=True if info.get("channel_is_verified") else None,
     )
 
 
@@ -122,6 +171,7 @@ async def save_video_info(
     """Insert or refresh a video's metadata from a yt-dlp info dict. Returns (id, created)."""
     channel_id = await channel_from_info(conn, info)
     duration = info.get("duration")
+    availability = info.get("availability")
     values = {
         "title": info.get("title") or info.get("fulltitle") or info["id"],
         "description": info.get("description"),
@@ -129,6 +179,9 @@ async def save_video_info(
         "published_at": published_at(info),
         "view_count": info.get("view_count"),
         "like_count": info.get("like_count"),
+        "availability": availability if availability in AVAILABILITIES else None,
+        "age_limit": _number(info.get("age_limit")),
+        "comment_count": _number(info.get("comment_count")),
     }
     existing = await fetch_one(
         conn, "SELECT id, video_type FROM videos WHERE youtube_id = ?", (info["id"],)
@@ -138,15 +191,17 @@ async def save_video_info(
         await conn.execute(
             """UPDATE videos SET channel_id = coalesce(?, channel_id), title = ?, description = ?,
                    duration = coalesce(?, duration), published_at = coalesce(?, published_at),
-                   view_count = ?, like_count = ?, video_type = ?, updated_at = ?
+                   view_count = ?, like_count = ?, availability = coalesce(?, availability),
+                   age_limit = coalesce(?, age_limit), comment_count = coalesce(?, comment_count),
+                   video_type = ?, updated_at = ?
                WHERE id = ?""",
             (channel_id, *values.values(), kind, now(), existing["id"]),
         )
         return existing["id"], False
     cursor = await conn.execute(
         """INSERT INTO videos (youtube_id, channel_id, title, description, duration, published_at,
-               view_count, like_count, video_type)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               view_count, like_count, availability, age_limit, comment_count, video_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (info["id"], channel_id, *values.values(), video_type or classify(info)),
     )
     return cursor.lastrowid, True
@@ -178,10 +233,28 @@ async def record_archived(
     width: int | None = None,
     height: int | None = None,
     archived_at: str | None = None,
+    *,
+    facts: dict[str, Any] | None = None,
 ) -> None:
+    facts = facts or {}
     await conn.execute(
         """UPDATE videos SET media_path = ?, media_size = ?, width = ?, height = ?,
-               archived_at = ?, deleted_at = NULL, updated_at = ?
+               fps = ?, vcodec = ?, acodec = ?, dynamic_range = ?, audio_languages = ?,
+               subtitle_tracks = ?, archived_at = ?, deleted_at = NULL, updated_at = ?
            WHERE id = ?""",
-        (media_path, media_size, width, height, archived_at or now(), now(), video_id),
+        (
+            media_path,
+            media_size,
+            width,
+            height,
+            facts.get("fps"),
+            facts.get("vcodec"),
+            facts.get("acodec"),
+            facts.get("dynamic_range"),
+            dumps(facts.get("audio_languages") or None),
+            dumps(facts.get("subtitle_tracks")),
+            archived_at or now(),
+            now(),
+            video_id,
+        ),
     )

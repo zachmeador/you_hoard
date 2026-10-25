@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-from app.db import Database
+from app.db import Database, loads
 from app.jobs import JobRunner
 from app.library import VIDEO_SELECT, quality_label
 from app.settings import Settings
@@ -35,6 +35,14 @@ def page_params(page: int, per_page: int) -> tuple[int, int]:
     return per_page, (page - 1) * per_page
 
 
+def clean_languages(value: list[str] | None) -> list[str] | None:
+    return [lang.strip() for lang in value if lang.strip()] if value is not None else None
+
+
+def art_url(channel_id: int, path: str | None, kind: str) -> str | None:
+    return f"/api/channels/{channel_id}/{kind}" if path else None
+
+
 def channel_ref(row: dict[str, Any], prefix: str = "channel_") -> dict[str, Any] | None:
     if row.get("channel_id") is None:
         return None
@@ -47,6 +55,7 @@ def channel_ref(row: dict[str, Any], prefix: str = "channel_") -> dict[str, Any]
 
 def video_out(row: dict[str, Any]) -> dict[str, Any]:
     video_id = row["id"]
+    fps = row["fps"]
     return {
         "id": video_id,
         "youtube_id": row["youtube_id"],
@@ -57,11 +66,20 @@ def video_out(row: dict[str, Any]) -> dict[str, Any]:
         "published_at": row["published_at"],
         "view_count": row["view_count"],
         "like_count": row["like_count"],
+        "comment_count": row["comment_count"],
         "video_type": row["video_type"],
         "status": row["status"],
         "job_id": row["job_id"],
         "error": row["job_error"] if row["status"] == "failed" else None,
         "unavailable": row["unavailable_at"] is not None,
+        "unavailable_at": row["unavailable_at"],
+        "availability": row["availability"],
+        "age_limit": row["age_limit"],
+        "fps": int(fps) if fps is not None and fps == int(fps) else fps,
+        "vcodec": row["vcodec"],
+        "acodec": row["acodec"],
+        "dynamic_range": row["dynamic_range"],
+        "audio_languages": loads(row["audio_languages"]) or [],
         "media_size": row["media_size"],
         "width": row["width"],
         "height": row["height"],

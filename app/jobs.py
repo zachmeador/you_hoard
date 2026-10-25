@@ -11,7 +11,7 @@ from typing import Any
 
 import aiosqlite
 
-from app.db import Database, dumps, fetch_one, from_timestamp, later, now
+from app.db import Database, dumps, fetch_one, from_timestamp, later, loads, now
 from app.settings import Settings
 from app.youtube import Blocked, Cancelled, NotReady, YouTube, YouTubeError
 
@@ -119,19 +119,21 @@ class JobRunner:
                 return cursor.lastrowid
             existing = await fetch_one(
                 conn,
-                "SELECT id, status FROM jobs WHERE kind = ? AND video_id IS ? "
+                "SELECT id, status, options FROM jobs WHERE kind = ? AND video_id IS ? "
                 "AND subscription_id IS ? AND status IN ('queued', 'paused', 'running')",
                 (kind, video_id, subscription_id),
             )
-            if (
-                kind == "check"
-                and options
-                and options.get("full")
-                and existing["status"] != "running"
-            ):
-                await conn.execute(
-                    "UPDATE jobs SET options = ? WHERE id = ?", (dumps(options), existing["id"])
-                )
+            if options and existing["status"] != "running":
+                if kind == "check" and options.get("full"):
+                    await conn.execute(
+                        "UPDATE jobs SET options = ? WHERE id = ?",
+                        (dumps(options), existing["id"]),
+                    )
+                elif kind == "download":
+                    merged = {**loads(existing["options"]), **options}
+                    await conn.execute(
+                        "UPDATE jobs SET options = ? WHERE id = ?", (dumps(merged), existing["id"])
+                    )
             return existing["id"]
 
         if conn is not None:

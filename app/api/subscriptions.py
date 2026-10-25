@@ -5,7 +5,16 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.deps import get_db, get_runner, get_settings, get_youtube, not_found
+from app.api.deps import (
+    art_url,
+    clean_languages,
+    get_db,
+    get_runner,
+    get_settings,
+    get_youtube,
+    not_found,
+)
+from app.artwork import save_channel_art
 from app.checks import apply_policy, queue_entry_download
 from app.db import Database, dumps, fetch_one, later, loads, now
 from app.jobs import JobRunner
@@ -25,10 +34,20 @@ router = APIRouter()
 Quality = Literal[tuple(QUALITIES)]
 VideoType = Literal["video", "short", "live"]
 Policy = Literal["none", "new", "recent", "all"]
-OVERRIDES = ("quality", "subtitle_languages", "download_comments")
+OVERRIDES = (
+    "quality",
+    "subtitle_languages",
+    "auto_captions",
+    "download_comments",
+    "audio_languages",
+    "live_chat",
+    "sponsorblock",
+)
+JSON_FIELDS = ("content_types", "subtitle_languages", "audio_languages")
 
 SUBSCRIPTION_SELECT = """
-SELECT sub.*, c.youtube_id AS channel_youtube_id, c.name AS channel_name
+SELECT sub.*, c.youtube_id AS channel_youtube_id, c.name AS channel_name,
+       c.avatar_path AS channel_avatar_path
 FROM subscriptions sub LEFT JOIN channels c ON c.id = sub.channel_id
 """
 COUNTS_SELECT = """
@@ -60,7 +79,11 @@ class SubscriptionFields(BaseModel):
     recent_count: int | None = Field(None, ge=1, le=1000)
     quality: Quality | None = None
     subtitle_languages: list[str] | None = None
+    auto_captions: bool | None = None
     download_comments: bool | None = None
+    audio_languages: list[str] | None = None
+    live_chat: bool | None = None
+    sponsorblock: bool | None = None
     check_interval_hours: int | None = Field(None, ge=1, le=720)
 
     @field_validator("content_types")
@@ -68,10 +91,10 @@ class SubscriptionFields(BaseModel):
     def unique_types(cls, value: list[str] | None) -> list[str] | None:
         return sorted(set(value), key=["video", "short", "live"].index) if value else value
 
-    @field_validator("subtitle_languages")
+    @field_validator("subtitle_languages", "audio_languages")
     @classmethod
     def languages(cls, value: list[str] | None) -> list[str] | None:
-        return [lang.strip() for lang in value if lang.strip()] if value is not None else None
+        return clean_languages(value)
 
 
 class NewSubscription(SubscriptionFields):
@@ -86,6 +109,10 @@ class CheckRequest(BaseModel):
     full: bool = False
 
 
+def flag(value: int | None) -> bool | None:
+    return None if value is None else bool(value)
+
+
 def subscription_out(row: dict[str, Any], counts: dict | None, jobs: dict) -> dict[str, Any]:
     active, finished = jobs.get("active"), jobs.get("finished")
     return {
@@ -98,6 +125,7 @@ def subscription_out(row: dict[str, Any], counts: dict | None, jobs: dict) -> di
             "id": row["channel_id"],
             "youtube_id": row["channel_youtube_id"],
             "name": row["channel_name"],
+            "avatar_url": art_url(row["channel_id"], row["channel_avatar_path"], "avatar"),
         }
         if row["channel_id"]
         else None,
@@ -108,9 +136,11 @@ def subscription_out(row: dict[str, Any], counts: dict | None, jobs: dict) -> di
         "recent_count": row["recent_count"],
         "quality": row["quality"],
         "subtitle_languages": loads(row["subtitle_languages"]),
-        "download_comments": None
-        if row["download_comments"] is None
-        else bool(row["download_comments"]),
+        "auto_captions": flag(row["auto_captions"]),
+        "download_comments": flag(row["download_comments"]),
+        "audio_languages": loads(row["audio_languages"]),
+        "live_chat": flag(row["live_chat"]),
+        "sponsorblock": flag(row["sponsorblock"]),
         "check_interval_hours": row["check_interval_hours"],
         "next_check_at": row["next_check_at"] if row["enabled"] else None,
         "last_checked_at": row["last_checked_at"],
@@ -200,6 +230,8 @@ async def resolve_source(
         "title": source.title,
         "url": source.url,
         "channel_name": source.channel_name,
+        "channel_handle": source.channel_handle,
+        "subscriber_count": source.subscriber_count,
         "owner_name": source.owner_name,
         "existing_subscription_id": existing,
     }
@@ -232,12 +264,14 @@ async def create_subscription(
                 handle=source.channel_handle,
                 description=source.description,
                 subscriber_count=source.subscriber_count,
+                verified=source.verified,
             )
         cursor = await conn.execute(
             """INSERT INTO subscriptions (kind, youtube_id, title, channel_id, owner_name, enabled,
                    content_types, download_policy, recent_count, quality, subtitle_languages,
-                   download_comments, check_interval_hours, next_check_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   auto_captions, download_comments, audio_languages, live_chat, sponsorblock,
+                   check_interval_hours, next_check_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 source.kind,
                 source.youtube_id,
@@ -250,7 +284,11 @@ async def create_subscription(
                 body.recent_count or 10,
                 body.quality,
                 dumps(body.subtitle_languages),
+                body.auto_captions,
                 body.download_comments,
+                dumps(body.audio_languages),
+                body.live_chat,
+                body.sponsorblock,
                 interval,
                 later(hours=interval),
             ),
@@ -264,6 +302,8 @@ async def create_subscription(
                 priority=5,
                 conn=conn,
             )
+    if channel_id:
+        await save_channel_art(db, youtube, channel_id, source)
     return await subscription_response(db, subscription_id)
 
 
@@ -286,10 +326,7 @@ async def update_subscription(
             raise HTTPException(status_code=422, detail=f"{key} cannot be empty")
     if not fields:
         return await subscription_response(db, subscription_id)
-    values = {
-        key: dumps(value) if key in ("content_types", "subtitle_languages") else value
-        for key, value in fields.items()
-    }
+    values = {key: dumps(value) if key in JSON_FIELDS else value for key, value in fields.items()}
     if "check_interval_hours" in fields:
         values["next_check_at"] = later(hours=fields["check_interval_hours"])
     values["updated_at"] = now()
@@ -365,7 +402,7 @@ async def list_entries(
     per_page: int = Query(50, ge=1, le=200),
     db: Database = Depends(get_db),
 ):
-    await load_subscription(db, subscription_id)
+    sub = await load_subscription(db, subscription_id)
     clauses, params = ["e.subscription_id = ?"], [subscription_id]
     if status:
         clauses.append("coalesce(s.status, 'not_selected') = ?")
@@ -383,22 +420,22 @@ async def list_entries(
         "ORDER BY e.removed_at IS NOT NULL, e.video_type, e.position LIMIT ? OFFSET ?",
         [*params, per_page, (page - 1) * per_page],
     )
+    keys = (
+        "youtube_id",
+        "title",
+        "video_type",
+        "duration",
+        "view_count",
+        "position",
+        "live_status",
+        "first_seen_at",
+        "removed_at",
+        "video_id",
+        "status",
+    )
+    own_channel = sub["channel_name"] if sub["kind"] == "channel" else None
     items = [
-        {
-            key: row[key]
-            for key in (
-                "youtube_id",
-                "title",
-                "video_type",
-                "duration",
-                "position",
-                "live_status",
-                "first_seen_at",
-                "removed_at",
-                "video_id",
-                "status",
-            )
-        }
+        {**{key: row[key] for key in keys}, "channel_name": row["channel_name"] or own_channel}
         for row in rows
     ]
     return {"items": items, "total": total, "page": page, "per_page": per_page}
