@@ -8,12 +8,11 @@ Where work on YouHoard is planned and tracked, in git. One file per workstream; 
 
 ## Working agreements
 
-- Large building work goes to Sonnet 5.5 subagents with a written brief. The main session plans, reviews, integrates and verifies.
 - Design reference: [docs/design/mockup.html](../design/mockup.html), opened directly in a browser. Its header comment holds the type, color and layout rules.
 - Each fact appears once in the UI. Don't repeat a number in two places, and no subtitles under page titles.
 - There are no users yet: rebuilding beats patching, and the schema can still change through a new migration.
 
 ## Known issues
 
-- The Docker image has never been built locally; only CI builds it.
+- The Docker image has never been run. Its CI build failed until the Dockerfile copied `README.md`, which `pyproject.toml` needs; confirm the next run passes.
 - The TubeArchivist import has only run against synthetic backups.

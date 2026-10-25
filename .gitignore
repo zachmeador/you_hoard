@@ -35,5 +35,5 @@ cookies.txt
 # Claude Code local state
 .claude/
 
-# Private notes
-docs/example-youtube-links.md
+# Personal notes that never get committed
+/.private/

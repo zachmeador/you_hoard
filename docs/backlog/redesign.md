@@ -1,6 +1,6 @@
 # Redesign: Strongroom
 
-Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.html), and add the backend data the design needs. Built 2026-10-25; the follow-ups below remain. The API contract is [redesign-api.md](redesign-api.md). The backend (sections 3 and 4) and frontend (sections 1 and 2) are built in parallel by Sonnet 5.5 subagents, then integrated and verified here.
+Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.html), and add the backend data the design needs. Built 2026-10-25; the follow-ups below remain. The API contract is [redesign-api.md](redesign-api.md). The backend (sections 3 and 4) and frontend (sections 1 and 2) were built in parallel, then integrated and verified together.
 
 ## Decisions
 

@@ -22,7 +22,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
-COPY main.py ./
+COPY README.md main.py ./
 COPY app ./app
 COPY --from=frontend /src/app/static/dist ./app/static/dist
 RUN uv sync --frozen --no-dev
