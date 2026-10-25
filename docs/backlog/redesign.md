@@ -1,6 +1,6 @@
 # Redesign: Strongroom
 
-Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.html), and add the backend data the design needs. Not started. Waiting for the owner to finish reading [the yt-dlp research](../research/yt-dlp-data.md).
+Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.html), and add the backend data the design needs. In progress since 2026-10-25. The API contract is [redesign-api.md](redesign-api.md). The backend (sections 3 and 4) and frontend (sections 1 and 2) are built in parallel by Sonnet 5.5 subagents, then integrated and verified here.
 
 ## Decisions
 
@@ -44,15 +44,15 @@ Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.
 
 - [ ] Return `unavailable_at`, and filter the video list by gone from YouTube.
 - [ ] Count waiting jobs (queued with a future `run_after`) separately from queued.
-- [ ] Date-group counts for the library grid.
+- [ ] Status counts for the library tabs (`GET /api/videos/counts`). The grid groups dates from the loaded page.
 - [ ] A per-video file list (media plus sidecars) and each subtitle track's source.
 - [ ] Settings for the opt-in defaults; subscription and video overrides.
 
-## 4. From the research (confirm after the owner's review)
+## 4. From the research (confirmed by the owner)
 
 - [ ] Store the exact upload time, codec, frame rate, HDR, audio language, availability and age limit.
 - [ ] Subtitles best-effort after the video; record which languages were saved and from what source.
-- [ ] Heatmap strip on the player timeline; comments tab.
+- [ ] Heatmap strip on the player timeline; comments tab; live chat replay; SponsorBlock markers.
 - [ ] Playlist entries: store the uploader channel and views.
 - [ ] Extra audio languages with a track switcher.
 - [ ] Channel avatar and banner saved as files.

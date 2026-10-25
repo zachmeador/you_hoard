@@ -4,7 +4,7 @@ Where work on YouHoard is planned and tracked, in git. One file per workstream; 
 
 | File | Workstream | Status |
 | --- | --- | --- |
-| [redesign.md](redesign.md) | Rebuild the frontend in the Strongroom design, plus the API additions it needs | Waiting for the owner to finish reading [the yt-dlp research](../research/yt-dlp-data.md) |
+| [redesign.md](redesign.md) | Rebuild the frontend in the Strongroom design, plus the API additions it needs ([contract](redesign-api.md)) | In progress |
 
 ## Working agreements
 
