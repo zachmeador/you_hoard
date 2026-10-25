@@ -2,10 +2,11 @@
 
 import asyncio
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
@@ -22,7 +23,7 @@ from app.api.deps import (
 from app.db import Database, loads, now
 from app.jobs import JobRunner
 from app.languages import language_name
-from app.library import VIDEO_SELECT, save_video_info
+from app.library import VIDEO_SELECT, published_at, save_video_info
 from app.tracks import AUTO, TRANSLATED, UPLOADED
 from app.youtube import (
     QUALITIES,
@@ -46,6 +47,8 @@ SORTS = {
 }
 STATUSES = ("archived", "downloading", "queued", "failed", "deleted", "missing")
 SUBTITLE_SOURCES = (UPLOADED, AUTO, TRANSLATED)
+# A resolved video's metadata is reused when it is added soon after, so YouTube is asked once.
+RESOLVED_TTL = 600
 
 
 class VideoOptions(BaseModel):
@@ -65,13 +68,40 @@ class VideoOptions(BaseModel):
         return clean_languages(value)
 
 
-class AddVideo(VideoOptions):
+class VideoUrl(BaseModel):
     url: str
 
     @field_validator("url")
     @classmethod
     def video_id(cls, value: str) -> str:
         return parse_video_url(value)
+
+
+class AddVideo(VideoOptions, VideoUrl):
+    pass
+
+
+def resolved_cache(request: Request) -> dict[str, tuple[float, dict[str, Any] | None]]:
+    if not hasattr(request.app.state, "resolved_videos"):
+        request.app.state.resolved_videos = {}
+    return request.app.state.resolved_videos
+
+
+async def fetch_info(
+    youtube: YouTube, youtube_id: str, cache: dict[str, tuple[float, dict[str, Any] | None]]
+) -> dict[str, Any] | None:
+    """YouTube's metadata for a video, or None for one that has not aired yet."""
+    cached = cache.pop(youtube_id, None)
+    if cached and time.monotonic() - cached[0] < RESOLVED_TTL:
+        return cached[1]
+    try:
+        return await youtube.fetch_video(youtube_id)
+    except NotReady:
+        return None
+    except (Unavailable, Inaccessible) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except YouTubeError as error:
+        raise HTTPException(status_code=502, detail=f"YouTube: {error}") from error
 
 
 class Watched(BaseModel):
@@ -221,9 +251,48 @@ async def get_video(video_id: int, db: Database = Depends(get_db)):
     return {**video_out(row), **await asyncio.to_thread(video_details, row, media)}
 
 
+@router.post("/resolve")
+async def resolve_video(
+    body: VideoUrl,
+    request: Request,
+    db: Database = Depends(get_db),
+    youtube: YouTube = Depends(get_youtube),
+):
+    """Preview a video URL before adding it: what it is, and whether the library has it."""
+    youtube_id = body.url
+    existing = await db.fetch_one(f"{VIDEO_SELECT} WHERE v.youtube_id = ?", (youtube_id,))
+    if existing:
+        video = video_out(existing)
+        return {
+            "youtube_id": youtube_id,
+            "title": video["title"],
+            "channel_name": video["channel"]["name"] if video["channel"] else None,
+            "duration": video["duration"],
+            "published_at": video["published_at"],
+            "live_status": None,
+            "view_count": video["view_count"],
+            "existing": {"video_id": video["id"], "status": video["status"]},
+        }
+    cache = resolved_cache(request)
+    info = await fetch_info(youtube, youtube_id, cache)
+    cache[youtube_id] = (time.monotonic(), info)
+    info = info or {}
+    return {
+        "youtube_id": youtube_id,
+        "title": info.get("title"),
+        "channel_name": info.get("channel") or info.get("uploader"),
+        "duration": info.get("duration"),
+        "published_at": published_at(info) if info else None,
+        "live_status": info.get("live_status") if info else "is_upcoming",
+        "view_count": info.get("view_count"),
+        "existing": None,
+    }
+
+
 @router.post("", status_code=201)
 async def add_video(
     body: AddVideo,
+    request: Request,
     db: Database = Depends(get_db),
     runner: JobRunner = Depends(get_runner),
     youtube: YouTube = Depends(get_youtube),
@@ -235,16 +304,7 @@ async def add_video(
         raise HTTPException(
             status_code=409, detail=f"Already {state} in your library: {existing['title']}"
         )
-    info = None
-    if not existing:
-        try:
-            info = await youtube.fetch_video(youtube_id)
-        except NotReady:
-            info = None
-        except (Unavailable, Inaccessible) as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        except YouTubeError as error:
-            raise HTTPException(status_code=502, detail=f"YouTube: {error}") from error
+    info = None if existing else await fetch_info(youtube, youtube_id, resolved_cache(request))
     options = body.model_dump(exclude={"url"}, exclude_none=True)
     async with db.transaction() as conn:
         if existing:

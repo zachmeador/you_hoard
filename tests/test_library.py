@@ -164,3 +164,24 @@ def test_upcoming_videos_wait_instead_of_failing(archive):
     assert job["attempts"] == 0
     assert "Not available" in job["error"]
     assert archive.client.get(f"/api/videos/{video['id']}").json()["status"] == "queued"
+
+
+def test_resolve_previews_a_video_and_add_reuses_it(archive):
+    archive.youtube.add(VIDEO, "Preview me")
+    url = f"https://youtu.be/{VIDEO}"
+    preview = archive.client.post("/api/videos/resolve", json={"url": url})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["title"] == "Preview me" and preview.json()["existing"] is None
+    video = archive.client.post("/api/videos", json={"url": url})
+    assert video.status_code == 201
+    assert sum(1 for call in archive.youtube.calls if call[0] == "fetch") == 1
+    archive.wait_job(video.json()["job_id"])
+    again = archive.client.post("/api/videos/resolve", json={"url": url}).json()
+    assert again["existing"] == {"video_id": video.json()["id"], "status": "archived"}
+    assert sum(1 for call in archive.youtube.calls if call[0] == "fetch") == 1
+    assert (
+        archive.client.post(
+            "/api/videos/resolve", json={"url": "https://youtube.com/@x"}
+        ).status_code
+        == 422
+    )
