@@ -69,6 +69,13 @@ npm run check && npm run build
 
 Tests run the real API against temporary SQLite databases and media folders, with a fake YouTube in place of yt-dlp. They do not prove compatibility with current YouTube; that needs a live check.
 
+The end-to-end browser test is opt-in. It drives the built frontend in your installed Google Chrome, or in the Chromium at `PLAYWRIGHT_CHROMIUM_EXECUTABLE`:
+
+```sh
+npm run build
+RUN_BROWSER_TESTS=1 uv run --with playwright python -m pytest -m browser
+```
+
 ## License
 
 MIT

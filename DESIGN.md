@@ -121,7 +121,19 @@ JSON under `/api`; the OpenAPI schema is at `/docs`. Auth is an HttpOnly session
 
 ## Frontend
 
-Svelte 5 single-page app in `src/`, built by Vite into `app/static/dist` and served by FastAPI. Hash routes: Library, Channels, Subscriptions (with inventory), Queue, Settings. During development Vite proxies `/api` to port 8000.
+Svelte 5 (runes) single-page app in `src/`, built by Vite into `app/static/dist` and served by FastAPI. During development Vite proxies `/api` to port 8000.
+
+- **Design:** the Strongroom design, with [docs/design/mockup.html](docs/design/mockup.html) as the reference.
+  - Brass color tokens for dark and light, and color only for state and actions.
+  - Inter, self-hosted.
+  - Each fact appears once in the UI.
+- **Hash routes:**
+  - `#/library`: grid or list, status tabs, filters, channel filter;
+  - `#/video/:id`: player with chapters, most-replayed strip, SponsorBlock markers and labelled subtitle tracks; details, files, comments, chat replay;
+  - `#/subscriptions` and `#/subscriptions/:id` (inventory and overrides);
+  - `#/queue`;
+  - `#/system` (settings, health, storage).
+- **Code:** `src/lib/api.js` is the API client; `src/lib/types.d.ts` types the API for `npm run check`.
 
 ## Configuration
 

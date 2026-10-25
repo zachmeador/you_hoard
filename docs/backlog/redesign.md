@@ -1,6 +1,6 @@
 # Redesign: Strongroom
 
-Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.html), and add the backend data the design needs. In progress since 2026-10-25. The API contract is [redesign-api.md](redesign-api.md). The backend (sections 3 and 4) and frontend (sections 1 and 2) are built in parallel by Sonnet 5.5 subagents, then integrated and verified here.
+Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.html), and add the backend data the design needs. Built 2026-10-25; the follow-ups below remain. The API contract is [redesign-api.md](redesign-api.md). The backend (sections 3 and 4) and frontend (sections 1 and 2) are built in parallel by Sonnet 5.5 subagents, then integrated and verified here.
 
 ## Decisions
 
@@ -14,13 +14,13 @@ Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.
 
 ## 1. Foundation
 
-- [ ] Brass tokens for dark and light, Inter, and the type scale and weights from the mockup.
-- [ ] Shell:
+- [x] Brass tokens for dark and light, Inter, and the type scale and weights from the mockup.
+- [x] Shell:
   - sidebar (Add, nav, channel list, account) at 1180px and wider;
   - top bar below that;
   - bottom tab bar on phones.
-- [ ] Routes: `#/library`, `#/video/:id`, `#/subscriptions`, `#/subscriptions/:id`, `#/queue`, `#/system`. Channels become a Library filter, and the sidebar channel list links to it.
-- [ ] Components:
+- [x] Routes: `#/library`, `#/video/:id`, `#/subscriptions`, `#/subscriptions/:id`, `#/queue`, `#/system`. Channels become a Library filter, and the sidebar channel list links to it.
+- [x] Components:
   - buttons and segmented control, select, search;
   - status glyph set and corner-layout thumbnail;
   - list rows, archived bar, policy control;
@@ -28,17 +28,17 @@ Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.
 
 ## 2. Screens
 
-- [ ] **Library:** grid and list (remembered), status tabs that wrap, filters, sort, date-grouped grid, channel header when filtered.
-- [ ] **Video page:** player sized to the video's aspect ratio, chapters, Details and Files panels, subtitles, actions, more from the channel.
-- [ ] **Subscriptions:** table with archived bars, last check, next check, enabled switch, actions.
-- [ ] **Subscription detail:**
+- [x] **Library:** grid and list (remembered), status tabs that wrap, filters, sort, date-grouped grid, channel header when filtered.
+- [x] **Video page:** player sized to the video's aspect ratio, chapters, Details and Files panels, subtitles, actions, more from the channel.
+- [x] **Subscriptions:** table with archived bars, last check, next check, enabled switch, actions.
+- [x] **Subscription detail:**
   - policy control and tabs;
   - overrides;
   - checks panel;
   - inventory table with per-entry download.
-- [ ] **Queue:** Running, Waiting, Up next, Failed and History sections with live progress.
-- [ ] **System:** health, storage, settings (including the opt-in defaults), rescan, TubeArchivist import instructions.
-- [ ] **Add dialog:** resolve a video, channel or playlist, then confirm.
+- [x] **Queue:** Running, Waiting, Up next, Failed and History sections with live progress.
+- [x] **System:** health, storage, settings (including the opt-in defaults), rescan, TubeArchivist import instructions.
+- [x] **Add dialog:** resolve a video, channel or playlist, then confirm.
 
 ## 3. API additions the design needs
 
@@ -66,5 +66,5 @@ Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.
 
 ## 5. Verification
 
-- [ ] An opt-in Playwright test of the main flows against the fake YouTube.
-- [ ] A live check against YouTube, plus phone and desktop widths in dark and light.
+- [x] An opt-in Playwright test of the main flows against the fake YouTube.
+- [x] A live check against YouTube through the new UI (add with options, play, subtitles, comments), plus phone and desktop widths.
