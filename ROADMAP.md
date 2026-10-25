@@ -2,6 +2,8 @@
 
 What exists is described in [DESIGN.md](DESIGN.md); the October 2026 reshape and its reasoning are in [docs/2026-10-reshape.md](docs/2026-10-reshape.md).
 
+Active work is planned and tracked in [docs/backlog](docs/backlog/README.md).
+
 ## Before migrating the TubeArchivist library
 
 - [ ] Dry-run `import-tubearchivist` against a real backup and a sample of the media folder; fix any field the importer misreads.

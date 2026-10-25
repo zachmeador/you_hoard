@@ -22,13 +22,12 @@ The rule: keep what belongs to the video and cannot be recovered once YouTube lo
   - chapters;
   - availability at archive time (public, unlisted, members-only);
   - the most-replayed heatmap, which is tiny and gone if the video disappears.
-- Uploaded subtitles in your languages: small text files, useful for accessibility and future search.
-- The original-language auto caption when there is no uploaded track. Speech recognition in the video's own language is real content; machine translations are not.
+- Subtitles in your chosen languages: the uploaded track when there is one, otherwise YouTube's auto caption, including machine translations. Label each track uploaded, auto or translated. Imperfect subtitles beat none. Fetch only the languages you choose, never all 157.
 - The best thumbnail, and the channel's avatar and banner, saved as files in the channel folder.
 - Facts about the file you archived: codec, frame rate, HDR, audio language. Store them in the database for display and filtering.
 - View, like and comment counts as a snapshot "at archive time". The sidecar copy is the record; the database copy is for sorting.
 
-**Keep if you opt in (per subscription or video)**
+**Keep if you opt in** (a library default in Settings, overridable per subscription or video)
 - **Comments.** Slow to fetch and large, but irreplaceable context for some channels. Off by default, capped, and shown in the UI when kept.
 - **Extra audio languages.** Each adds about 128 kb/s; twenty dubs is roughly 40% more at 1080p.
 - **Live chat replay** for streams. These are large JSON files.
@@ -37,7 +36,6 @@ The rule: keep what belongs to the video and cannot be recovered once YouTube lo
 **Don't keep**
 - **Format tables, signed URLs, request headers, fragment lists.** They expire and are bulky; already dropped.
 - **Extra thumbnail sizes and storyboards.** Scrub previews can be generated from the file with ffmpeg.
-- **Machine-translated captions.** Low quality, regenerable, and each one is a rate-limited request.
 - **Compressed-dynamics ("DRC") audio.** It only matters when streaming.
 - **Comment authors' avatar images, and per-video copies of channel stats.**
 - **Routine counter refreshes.** Use an explicit metadata refresh instead, mainly to catch videos that went private or were removed.
@@ -45,7 +43,7 @@ The rule: keep what belongs to the video and cannot be recovered once YouTube lo
 **What this changes from today**
 1. Store the exact upload time, not just the date.
 2. Store codec, frame rate, HDR, audio language, availability and age limit.
-3. Make auto captions original-language only by default (next section).
+3. Record whether each subtitle track is uploaded, auto or translated, so the player can label it (next section).
 4. Save channel avatars and banners.
 5. Store playlist entries' channel and view count.
 6. Stop one failed subtitle from failing the whole download (next section).
@@ -60,14 +58,14 @@ This already works:
 Three problems surfaced while checking:
 
 1. **One failed language fails the whole video.** yt-dlp aborts the download when any subtitle fails, unless told to ignore every error, which would also hide real download failures. YouTube rate-limits its caption endpoint (HTTP 429), so more languages means more failed downloads. Fix: fetch subtitles in a second, best-effort step after the video, record which languages were saved, and let a later retry fill in the rest.
-2. **Machine translations slip in.** When a language has no uploaded track, YouHoard falls back to YouTube's auto captions. For any language other than the video's own, that is a machine translation, so asking for five languages can produce five of them. YouTube labels the original-language auto track separately (`en-orig`, "English (Original)"), so they can be told apart.
+2. **Translated tracks look the same as uploaded ones.** When a language has no uploaded track, YouHoard falls back to YouTube's auto caption; for any language other than the video's own, that is a machine translation. Keeping it is right (it beats no subtitles), but today the file is just `<name>.fr.vtt` either way, so the player can't say which it is. The download already knows: a language found in yt-dlp's `subtitles` is uploaded, one only in `automatic_captions` is auto (`-orig` marks the original-language one). Record that per track.
 3. **Codes must match YouTube's:** `en` versus `en-GB`, `pt-BR`, `zh-Hans`, `es-419`. yt-dlp accepts patterns like `en.*`, but those also pull in regional variants and the `-orig` track.
 
 The recommended design:
 - **Languages:** a picker for subtitle languages with an "All uploaded" choice, replacing the comma-separated box.
-- **Auto captions:** off, original language only (the default), or also translations.
+- **Auto captions:** on by default (uploaded first, then auto or translated, labelled), with an option to turn them off.
 - **Per subscription:** the same controls, overriding the library default.
-- **Video page:** each track labelled uploaded, auto or translated. The file name keeps YouTube's code (`en-orig`) so the type survives without the app.
+- **Video page:** each track labelled uploaded, auto or translated, from the recorded source. The `.info.json` records it too, so the label survives without the app.
 
 For comparison, TubeArchivist had a comma-separated language list, a choice between uploaded and auto-generated captions, and an option to index subtitle text for search. How well it worked in practice is unknown; it faced the same YouTube limits.
 
