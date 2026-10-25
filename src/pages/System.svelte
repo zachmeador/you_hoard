@@ -327,7 +327,6 @@
         <dl class="ledger">
           <div><dt>Videos</dt><dd>{int(info.library.videos)}</dd></div>
           <div><dt>Archived</dt><dd>{int(info.library.archived)}</dd></div>
-          <div><dt>Archive size</dt><dd>{bytes(info.library.archived_size)}</dd></div>
           <div><dt>Channels</dt><dd>{int(info.library.channels)}</dd></div>
           <div><dt>Subscriptions</dt><dd>{int(info.library.subscriptions)}</dd></div>
           <div class="gone"><dt><i class="lz"></i> Gone from YouTube</dt><dd>{int(info.library.unavailable)}</dd></div>

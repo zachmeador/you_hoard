@@ -40,6 +40,7 @@
     const q = filter
     const sort = prefs.channelSort
     void ui.channelsVersion
+    void queue.signature
     untrack(() => {
       generation++
       more = []

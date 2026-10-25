@@ -190,11 +190,11 @@
   </div>
   <div>
     <div class="big">{bytes(combined)}<small>/s</small></div>
-    <div class="k">combined speed · {int(counts.queued + counts.waiting)} queued</div>
+    <div class="k">combined speed</div>
   </div>
   <div class="bulk">
     <button type="button" class="btn" disabled={counts.failed === 0} onclick={retryFailed}>
-      <Icon name="retry" />Retry failed <span class="muted">{int(counts.failed)}</span>
+      <Icon name="retry" />Retry failed
     </button>
     <button type="button" class="btn" disabled={finished === 0} onclick={clearFinished}>Clear finished</button>
   </div>
@@ -209,7 +209,7 @@
 />
 
 {#if view === '' || view === 'running'}
-  <div class="sec-h"><h2 class="label">Running</h2><span class="n">{running.length}</span></div>
+  <div class="sec-h"><h2 class="label">Running</h2></div>
   {#each running as job (job.id)}
     <RunningJob {job} oncancel={() => jobAction(job, 'cancel')} />
   {:else}
@@ -218,7 +218,7 @@
 {/if}
 
 {#if (view === '' || view === 'waiting') && waiting.length}
-  <div class="sec-h"><h2 class="label">Waiting</h2><span class="n">{counts.waiting}</span></div>
+  <div class="sec-h"><h2 class="label">Waiting</h2></div>
   <table class="tbl q stack">
     <thead>
       <tr>
@@ -261,11 +261,6 @@
 {#if (view === '' || view === 'queued' || view === 'paused') && (upNext.length || view)}
   <div class="sec-h">
     <h2 class="label">{view === 'paused' ? 'Paused' : 'Up next'}</h2>
-    <span class="n">
-      {#if view === 'paused'}{int(counts.paused)}
-      {:else if view === 'queued'}{int(counts.queued)}
-      {:else}{int(counts.queued)} queued · {int(counts.paused)} paused{/if}
-    </span>
   </div>
   {#if upNext.length}
     <table class="tbl q stack">
@@ -322,12 +317,6 @@
   {#if failed.length || view}
     <div class="sec-h">
       <h2 class="label">Failed</h2>
-      <span class="n">{int(counts.failed)}</span>
-      {#if failed.length}
-        <span class="r">
-          <button type="button" class="btn sm" onclick={retryFailed}><Icon name="retry" />Retry all</button>
-        </span>
-      {/if}
     </div>
     {#if failed.length}
       <table class="tbl q stack">
@@ -387,7 +376,6 @@
   {#if history.length || view}
     <div class="sec-h">
       <h2 class="label">History</h2>
-      <span class="n">{int(counts.completed)} completed · {int(counts.cancelled)} cancelled</span>
     </div>
     {#if history.length}
       <table class="tbl q hist stack">
