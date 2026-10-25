@@ -32,8 +32,8 @@ cookies.txt
 *.swp
 .DS_Store
 
-# Claude Code agent worktrees
-.claude/worktrees/
+# Claude Code local state
+.claude/
 
 # Private notes
 docs/example-youtube-links.md
