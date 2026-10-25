@@ -42,20 +42,27 @@ Rebuild the Svelte frontend to match [docs/design/mockup.html](../design/mockup.
 
 ## 3. API additions the design needs
 
-- [ ] Return `unavailable_at`, and filter the video list by gone from YouTube.
-- [ ] Count waiting jobs (queued with a future `run_after`) separately from queued.
-- [ ] Status counts for the library tabs (`GET /api/videos/counts`). The grid groups dates from the loaded page.
-- [ ] A per-video file list (media plus sidecars) and each subtitle track's source.
-- [ ] Settings for the opt-in defaults; subscription and video overrides.
+- [x] Return `unavailable_at`, and filter the video list by gone from YouTube.
+- [x] Count waiting jobs (queued with a future `run_after`) separately from queued.
+- [x] Status counts for the library tabs (`GET /api/videos/counts`). The grid groups dates from the loaded page.
+- [x] A per-video file list (media plus sidecars) and each subtitle track's source.
+- [x] Settings for the opt-in defaults; subscription and video overrides.
+- [x] `POST /api/videos/resolve` so the Add dialog can preview a video (added during integration).
 
 ## 4. From the research (confirmed by the owner)
 
-- [ ] Store the exact upload time, codec, frame rate, HDR, audio language, availability and age limit.
-- [ ] Subtitles best-effort after the video; record which languages were saved and from what source.
-- [ ] Heatmap strip on the player timeline; comments tab; live chat replay; SponsorBlock markers.
-- [ ] Playlist entries: store the uploader channel and views.
-- [ ] Extra audio languages with a track switcher.
-- [ ] Channel avatar and banner saved as files.
+- [x] Store the exact upload time, codec, frame rate, HDR, audio language, availability and age limit.
+- [x] Subtitles best-effort after the video; record which languages were saved and from what source.
+- [x] Data for the heatmap, comments, live chat replay and SponsorBlock markers. The UI is in section 2.
+- [x] Playlist entries: store the uploader channel and views.
+- [x] Extra audio languages, downloaded as additional tracks. Switching in the player is a follow-up.
+- [x] Channel avatar and banner saved as files.
+
+## Follow-ups found while building
+
+- **Audio track switching.** Browsers only switch tracks in a muxed file in Safari (`audioTracks`). Elsewhere it needs a per-track stream (an ffmpeg remux endpoint). Decide whether it's worth it.
+- **Translated captions.** YouTube answered HTTP 429 to every translated-caption request in the live check. A later "fill in missing subtitles" job with backoff would recover some.
+- **Playlist uploaders.** Flat playlist listings include the uploader for only a few entries; the rest fill in when downloaded.
 
 ## 5. Verification
 

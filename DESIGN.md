@@ -25,10 +25,12 @@ Run one process. On shutdown, running downloads are aborted at the next progress
 ```text
 <MEDIA_DIR>/
   <Channel name> [<channel id>]/
-    <YYYY-MM-DD> <Title> [<video id>].mp4         # or .mkv/.webm
-    <YYYY-MM-DD> <Title> [<video id>].info.json   # slimmed yt-dlp metadata, comments
+    channel.jpg, banner.jpg                        # channel art, for subscribed channels
+    <YYYY-MM-DD> <Title> [<video id>].mp4          # or .mkv/.webm; extra audio languages as tracks
+    <YYYY-MM-DD> <Title> [<video id>].info.json    # slimmed yt-dlp metadata (see below)
     <YYYY-MM-DD> <Title> [<video id>].jpg
-    <YYYY-MM-DD> <Title> [<video id>].en.vtt
+    <YYYY-MM-DD> <Title> [<video id>].en.vtt       # one per saved subtitle language
+    <YYYY-MM-DD> <Title> [<video id>].live_chat.json   # stream chat replay, when kept
   .youhoard/incomplete/<video id>/                 # in-progress downloads
 ```
 
@@ -37,6 +39,11 @@ Run one process. On shutdown, running downloads are aborted at the next progress
 - Sidecars share the media file's basename, so `videos.media_path` is the only path stored. Files imported from TubeArchivist in place (`<channel id>/<video id>.mp4`, `<video id>.en.vtt`) follow the same rule.
 - Downloads complete in `.youhoard/incomplete` and are moved into place on the same filesystem, so media servers never see partial files.
 - Every served or removed path is resolved inside `MEDIA_DIR`.
+- The `.info.json` holds:
+  - yt-dlp's metadata without expiring URLs or format tables;
+  - chapters, the most-replayed `heatmap`, and `comments` when kept;
+  - `sponsorblock_chapters` when SponsorBlock is on;
+  - a `_youhoard` block recording each subtitle track's source (uploaded, auto or translated) and the file's audio languages, so a rescan can rebuild them.
 
 ## Data model
 
@@ -44,12 +51,12 @@ Migrations live in `app/migrations/NNN_name.sql` and are tracked with `PRAGMA us
 
 | Table | Purpose |
 | --- | --- |
-| `channels` | YouTube uploaders (`youtube_id` = `UC…`). |
-| `videos` | One row per video the library knows. `media_path` (relative to `MEDIA_DIR`) is set when archived. `deleted_at` marks local files removed by the user: never downloaded automatically again. `unavailable_at` records that YouTube reported the video gone. `watched_at`. `channel_id` may be null until metadata is known. |
-| `subscriptions` | A followed channel or playlist with its `download_policy`, content types (channel tabs), quality/subtitle/comment overrides and `next_check_at`. |
-| `source_entries` | Inventory: every video a subscription's source has listed, with position, `baseline` flag and `removed_at`. Joined to `videos` by YouTube ID. |
+| `channels` | YouTube uploaders (`youtube_id` = `UC…`), with verified flag and avatar/banner paths. |
+| `videos` | One row per video the library knows. `media_path` (relative to `MEDIA_DIR`) is set when archived. `deleted_at` marks local files removed by the user: never downloaded automatically again. `unavailable_at` records that YouTube reported the video gone. `watched_at`. `channel_id` may be null until metadata is known. Also `published_at` (with time when known), availability, age limit, comment count, and the archived file's fps, codecs, dynamic range, audio languages and subtitle tracks. |
+| `subscriptions` | A followed channel or playlist with its `download_policy`, content types (channel tabs), download-option overrides (null means the library default) and `next_check_at`. |
+| `source_entries` | Inventory: every video a subscription's source has listed, with position, `baseline` flag, `removed_at`, view count and uploader. Joined to `videos` by YouTube ID. |
 | `jobs` | `download` and `check` (and `scan`) work. Partial unique indexes allow one active job per video or subscription. `options` is input, `result` output. `run_after` defers premieres and retry backoff. |
-| `settings` | Runtime settings as JSON values: default quality, subtitle languages, comments, concurrency, default check interval. |
+| `settings` | Runtime settings as JSON values: library download defaults (quality, subtitle languages, auto captions, comments, audio languages, live chat, SponsorBlock), concurrency, default check interval. |
 | `users`, `sessions` | One account; sessions store a SHA-256 of the token. |
 
 A video's status is derived (`app/library.py`): `archived` (has a file) → `downloading` / `queued` (latest download job) → `deleted` → `failed` → `missing` (known, not archived, nothing pending).
@@ -69,7 +76,14 @@ Channel subscriptions follow the selected tabs (`/videos`, `/shorts`, `/streams`
 
 ## Downloads
 
-A download job extracts metadata once, defers upcoming/live videos, then downloads with the subscription or library quality cap. Formats are chosen by resolution first (so 1440p/2160p are real), merged into MP4 when the codecs allow and MKV otherwise. After postprocessing the job moves the media, thumbnail (JPEG), subtitles (VTT) and a slimmed `.info.json` into place and records the actual resolution and size.
+Download options resolve per video (the job's options), then per subscription, then library settings (`app/options.py`). They are resolved when the job runs, so editing a subscription affects its waiting downloads.
+
+A download job extracts metadata once and defers upcoming or live videos. It then works in two phases (`app/youtube.py`):
+
+1. **Media.** Video plus the original audio, and any requested extra audio languages that exist, as additional tracks. Formats are chosen by resolution first (so 1440p/2160p are real), then MP4-compatible codecs, then H.264. Output is MP4 when the streams fit and MKV otherwise. A failure here fails the job.
+2. **Extras, best effort.** Subtitles for the chosen languages (uploaded first, then auto captions including machine translations), live chat replay, and SponsorBlock segments (stored, never cut). A failure here only loses that extra. YouTube rate-limits translated captions heavily.
+
+The job then moves the media, thumbnail (JPEG), subtitles (VTT), chat and `.info.json` into place, and records the file's facts.
 
 Transient failures retry with backoff (15 min, 1 h, 4 h) before failing. "Video unavailable"-type errors fail immediately and set `unavailable_at`. Running downloads can be cancelled.
 
@@ -99,8 +113,8 @@ JSON under `/api`; the OpenAPI schema is at `/docs`. Auth is an HttpOnly session
 | Prefix | Endpoints |
 | --- | --- |
 | `/api/auth` | `status`, `setup`, `login`, `logout` |
-| `/api/videos` | list/filter/sort, get, add by URL, download, delete local files, watched, `media` (range requests), `thumbnail`, `subtitles/{lang}` |
-| `/api/channels` | list with counts, get |
+| `/api/videos` | list/filter/sort, `counts`, get (with chapters, heatmap, SponsorBlock segments, subtitles, files), `resolve` and add by URL, download with per-video options, delete local files, watched, `media` (range requests), `thumbnail`, `subtitles/{lang}`, `comments`, `chat` |
+| `/api/channels` | list with counts and sorting, get, `avatar`, `banner` |
 | `/api/subscriptions` | `resolve`, create, list, get, update, delete, `check`, `entries`, download one entry |
 | `/api/jobs` | list with live progress, cancel, retry, pause, resume, remove, clear finished, retry failed |
 | `/api/settings`, `/api/system`, `/api/library/rescan` | runtime settings, versions/disk/library stats, rescan |
