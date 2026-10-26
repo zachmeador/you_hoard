@@ -89,7 +89,11 @@ def ffmpeg_version() -> str | None:
 
 
 @router.get("/system")
-async def system_status(db: Database = Depends(get_db), youtube: YouTube = Depends(get_youtube)):
+async def system_status(
+    db: Database = Depends(get_db),
+    youtube: YouTube = Depends(get_youtube),
+    runner: JobRunner = Depends(get_runner),
+):
     versions = await asyncio.to_thread(youtube.versions)
     ffmpeg = await asyncio.to_thread(ffmpeg_version)
     try:
@@ -125,6 +129,7 @@ async def system_status(db: Database = Depends(get_db), youtube: YouTube = Depen
         "library": library,
         "queue": queue,
         "trash": await asyncio.to_thread(trash.summary),
+        "youtube_paused_until": runner.youtube_resumes_at,
     }
 
 

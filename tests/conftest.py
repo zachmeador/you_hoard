@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app import jobs
 from app.config import config
 from main import create_app
 from tests.fake_youtube import FakeYouTube
@@ -62,6 +63,7 @@ class Archive:
 def anonymous(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Archive]:
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(config, "MEDIA_DIR", tmp_path / "media")
+    monkeypatch.setattr(jobs, "DOWNLOAD_REST", (0.0, 0.0))
     youtube = FakeYouTube()
     with TestClient(create_app(youtube=youtube)) as client:
         try:

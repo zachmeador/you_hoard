@@ -22,6 +22,8 @@ class QueueState {
   running = $state([])
   /** Paused and waiting downloads: states a video does not carry itself. @type {Job[]} */
   held = $state([])
+  /** When downloads and checks resume after a YouTube bot check. @type {string | null} */
+  youtubePausedUntil = $state(null)
 
   /** Download jobs by video id: running, paused and waiting. */
   byVideo = $derived.by(() => {
@@ -47,6 +49,7 @@ class QueueState {
     if (res.counts.paused > 0) held.push(...(await api.jobs.list({ status: 'paused', limit: PAGE })).items)
     if (res.counts.waiting > 0) held.push(...(await this.#waiting(res.counts.waiting)))
     this.counts = { ...emptyCounts(), ...res.counts }
+    this.youtubePausedUntil = res.youtube_paused_until ?? null
     this.running = res.items
     this.held = held.filter((j) => j.kind === 'download')
   }

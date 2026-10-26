@@ -90,6 +90,8 @@ The job then moves the media, thumbnail (JPEG), subtitles (VTT), chat and `.info
 
 Transient failures retry with backoff (15 min, 1 h, 4 h) before failing. "Video unavailable"-type errors fail immediately and set `unavailable_at`. Running downloads can be cancelled.
 
+YouTube gets a gentle pace. Each download worker rests 10–30 s after a download, yt-dlp sleeps 0.75 s between extraction requests and 5 s between subtitle files, and a job's start is spaced from the last one by `YTDLP_REQUEST_INTERVAL`. A bot check (or 429) pauses all downloads and checks rather than letting each queued job run into it: the job goes back to the queue without using an attempt, queued YouTube jobs wait until the pause ends, and the scheduler queues no checks meanwhile. Pauses last 1, 2, 4, 8, then 12 hours while YouTube keeps refusing, and reset after a success. The Queue page shows the pause, with "Resume now" (`POST /api/jobs/resume-youtube`). The pause lives in memory; after a restart, queued jobs still wait for their `run_after`.
+
 ## TubeArchivist import
 
 `python -m app import-tubearchivist` (`app/tubearchivist.py`) reads a TubeArchivist backup zip or a live Elasticsearch. Formats were checked against TubeArchivist's source from v0.1.7 to current master.

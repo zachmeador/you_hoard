@@ -89,7 +89,19 @@ async def list_jobs(
         if row["status"] == "queued":
             counts["waiting"] = row["later"]
             counts["queued"] = row["n"] - row["later"]
-    return {"items": [job_out(row, runner) for row in rows], "total": total, "counts": counts}
+    return {
+        "items": [job_out(row, runner) for row in rows],
+        "total": total,
+        "counts": counts,
+        "youtube_paused_until": runner.youtube_resumes_at,
+    }
+
+
+@router.post("/resume-youtube")
+async def resume_youtube(runner: JobRunner = Depends(get_runner)):
+    """End a bot-check pause early, e.g. after loading cookies."""
+    await runner.resume_youtube()
+    return {"ok": True}
 
 
 async def transition(

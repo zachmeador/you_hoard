@@ -256,7 +256,12 @@ export const api = {
     /** @returns {Promise<{ cleared: number }>} */
     clearFinished: () => request('POST', '/jobs/clear'),
     /** @returns {Promise<{ retried: number }>} */
-    retryFailed: () => request('POST', '/jobs/retry-failed')
+    retryFailed: () => request('POST', '/jobs/retry-failed'),
+    /**
+     * End a bot-check pause early.
+     * @returns {Promise<{ ok: boolean }>}
+     */
+    resumeYoutube: () => request('POST', '/jobs/resume-youtube')
   },
 
   settings: {

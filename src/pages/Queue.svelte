@@ -135,6 +135,17 @@
     }
   }
 
+  async function resumeYoutube() {
+    try {
+      await api.jobs.resumeYoutube()
+      notify.success('Downloads and checks resumed')
+      await refresh(true)
+      queue.refresh().catch(() => {})
+    } catch (e) {
+      notify.error(e)
+    }
+  }
+
   async function clearFinished() {
     try {
       const { cleared } = await api.jobs.clearFinished()
@@ -199,6 +210,20 @@
     <button type="button" class="btn" disabled={finished === 0} onclick={clearFinished}>Clear finished</button>
   </div>
 </div>
+
+{#if queue.youtubePausedUntil}
+  <div class="callout qpause">
+    <Icon name="clock" class="mk" />
+    <div>
+      <span class="ttl2">YouTube asked for a bot check</span>
+      Downloads and checks wait until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}),
+      instead of each one running into it. The wait grows if YouTube keeps asking.
+      <div class="acts">
+        <button type="button" class="btn" onclick={resumeYoutube}>Resume now</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <FilterTabs
   class="qtabs"

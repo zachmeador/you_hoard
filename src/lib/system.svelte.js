@@ -16,6 +16,7 @@ class SystemState {
     if (info.disk && info.disk.free / info.disk.total < LOW_DISK) list.push('Disk almost full')
     if (!info.ffmpeg) list.push('ffmpeg is missing')
     if (!info.js_runtime) list.push('No JavaScript runtime for yt-dlp')
+    if (info.youtube_paused_until) list.push('YouTube asked for a bot check; downloads are waiting')
     return list
   })
 

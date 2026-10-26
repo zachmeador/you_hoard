@@ -2,13 +2,13 @@
 
 import asyncio
 
-from app.youtube import Blocked, Unavailable
+from app.youtube import Unavailable, YouTubeError
 from tests.test_library import OTHER, VIDEO, add
 
 
 def test_transient_failures_back_off_then_fail(archive):
     archive.youtube.add(VIDEO)
-    archive.youtube.download_failures[VIDEO] = Blocked("Sign in to confirm you're not a bot")
+    archive.youtube.download_failures[VIDEO] = YouTubeError("HTTP Error 503: Service Unavailable")
     video = add(archive)
     for attempt in range(1, 4):
         job = archive.wait(
@@ -18,7 +18,7 @@ def test_transient_failures_back_off_then_fail(archive):
                 and job
             )
         )
-        assert job["run_after"] and "bot" in job["error"]
+        assert job["run_after"] and "503" in job["error"]
         archive.sql("UPDATE jobs SET run_after = NULL")
         archive.app.state.runner.wake()
     failed = archive.wait_job(video["job_id"], "failed")

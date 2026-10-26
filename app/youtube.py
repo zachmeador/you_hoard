@@ -43,7 +43,10 @@ NOT_READY = {"is_upcoming", "is_live", "post_live"}
 QUALITIES = ["best", "2160p", "1440p", "1080p", "720p", "480p", "360p"]
 # Resolution first, then the most playable container and codec at that resolution.
 FORMAT_SORT = ["res", "ext:mp4:m4a", "vcodec:h264"]
-SUBTITLE_SLEEP = 2
+# Pauses yt-dlp takes between requests while extracting, and between subtitle files (yt-dlp's
+# own suggestion for many downloads in a row); YouTube rate-limits subtitles first.
+REQUEST_SLEEP = 0.75
+SUBTITLE_SLEEP = 5
 SPONSOR_CATEGORIES = [
     "sponsor",
     "intro",
@@ -335,6 +338,7 @@ class YouTube:
             "retries": 5,
             "fragment_retries": 10,
             "extractor_retries": 3,
+            "sleep_interval_requests": REQUEST_SLEEP,
             "noplaylist": True,
             "js_runtimes": {config.YTDLP_JS_RUNTIME: runtime},
         }

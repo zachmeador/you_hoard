@@ -348,6 +348,8 @@ export interface JobList {
   items: Job[]
   total: number
   counts: JobCounts
+  /** Set while downloads and checks wait out a YouTube bot check. */
+  youtube_paused_until: string | null
 }
 
 export interface JobQuery {
@@ -406,4 +408,5 @@ export interface SystemInfo {
   }
   queue: { queued: number; running: number; failed: number }
   trash: { videos: number; size: number }
+  youtube_paused_until: string | null
 }
