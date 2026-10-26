@@ -46,5 +46,6 @@ def test_a_version_one_database_gains_the_new_columns_and_keeps_its_rows(tmp_pat
             assert subscription[column] is None, column
         entry = conn.execute("SELECT * FROM source_entries").fetchone()
         assert entry["channel_name"] is None and entry["view_count"] is None
-        status = conn.execute("SELECT status FROM video_status").fetchone()
+        status = conn.execute("SELECT * FROM video_status").fetchone()
         assert status["status"] == "archived"
+        assert status["job_run_after"] is None and status["job_attempts"] is None

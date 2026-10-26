@@ -138,6 +138,30 @@ def test_inventory_entries_can_be_downloaded_one_at_a_time(archive):
     assert archive.client.post(f"{url}/{target}/download").status_code == 409
 
 
+def test_inventory_entries_carry_their_pending_download(archive):
+    running, paused, waiting = ids("pend", 3)
+    seed_tab(archive, "video", [running, paused, waiting])
+    sub = subscribe(archive)
+    url = f"/api/subscriptions/{sub['id']}/entries"
+    archive.youtube.hold.set()
+    archive.client.put("/api/settings", json={"max_concurrent_downloads": 1})
+    jobs = {
+        youtube_id: archive.client.post(f"{url}/{youtube_id}/download").json()["job_id"]
+        for youtube_id in (running, paused, waiting)
+    }
+    archive.wait_job(jobs[running], "running")
+    archive.client.post("/api/jobs/pause", json={"ids": [jobs[paused]]})
+    later = "2099-01-01T00:00:00Z"
+    archive.sql("UPDATE jobs SET run_after = ? WHERE id = ?", (later, jobs[waiting]))
+
+    entries = {entry["youtube_id"]: entry for entry in archive.client.get(url).json()["items"]}
+    assert entries[running]["job"]["status"] == "running"
+    held = {"status": "paused", "run_after": None, "attempts": 0, "error": None}
+    assert entries[paused]["status"] == "queued" and entries[paused]["job"] == held
+    assert entries[waiting]["job"]["status"] == "queued"
+    assert entries[waiting]["job"]["run_after"] == later
+
+
 def test_adding_a_tab_lists_it_and_removing_a_subscription_keeps_videos(archive):
     seed_tab(archive, "video", ids("vid", 1))
     seed_tab(archive, "live", ids("liv", 1))

@@ -1,4 +1,4 @@
-/** @import { Job } from './types' */
+/** @import { Job, JobState } from './types' */
 import { bytes, int, parseTime } from './format.js'
 
 /** One try plus the three retries the job runner makes. */
@@ -6,7 +6,7 @@ export const MAX_ATTEMPTS = 4
 
 /**
  * A queued job that is held back until its `run_after` time (a retry backoff or a premiere).
- * @param {Job} job
+ * @param {JobState} job
  * @param {number} [now]
  */
 export function isWaiting(job, now = Date.now()) {
@@ -14,10 +14,10 @@ export function isWaiting(job, now = Date.now()) {
   return (parseTime(job.run_after)?.getTime() ?? 0) > now
 }
 
-/** @param {Job} job */
+/** @param {JobState} job */
 export const isRetry = (job) => job.attempts > 0 && !!job.error
 
-/** @param {Job} job */
+/** @param {JobState} job */
 export const isPremiere = (job) => !isRetry(job) && /premiere|upcoming/i.test(job.error ?? '')
 
 const GONE = /private video|has been removed|been terminated|no longer available|removed for violating|copyright|does not exist|video unavailable/i
@@ -34,7 +34,7 @@ export function shortReason(text) {
 
 /**
  * Why a waiting job has not run yet; empty for premieres, whose time says it all.
- * @param {Job} job
+ * @param {JobState} job
  */
 export function waitNote(job) {
   if (isRetry(job)) return `Attempt ${job.attempts + 1} of ${MAX_ATTEMPTS}, after ${shortReason(job.error ?? '')}`

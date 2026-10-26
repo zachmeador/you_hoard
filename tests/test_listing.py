@@ -148,6 +148,24 @@ def test_jobs_wait_for_a_premiere_without_counting_as_queued(archive):
     assert now["counts"]["waiting"] == 0 and now["counts"]["queued"] == 1
 
 
+def test_videos_carry_their_download_job_until_it_finishes(archive):
+    videos = build_library(archive)
+
+    def job(name):
+        return archive.client.get(f"/api/videos/{videos[name]['id']}").json()["job"]
+
+    assert job("alpha") is None and job("delta") is None and job("foxtrot") is None
+    assert job("hotel")["status"] == "running"
+    echo = job("echo")
+    assert echo["status"] == "queued" and echo["run_after"] > "2026"
+
+    archive.client.post("/api/jobs/pause", json={"ids": [videos["echo"]["job_id"]]})
+    listed = archive.client.get("/api/videos", params={"per_page": 200}).json()["items"]
+    paused = next(video for video in listed if video["title"] == "Echo")
+    assert paused["status"] == "queued" and paused["job"]["status"] == "paused"
+    assert paused["job"]["run_after"] == echo["run_after"]
+
+
 def job_list(archive, **params):
     response = archive.client.get("/api/jobs", params=params)
     assert response.status_code == 200, response.text

@@ -59,8 +59,9 @@
   let tab = $state('description')
 
   const video = $derived(detail.data)
-  const job = $derived(video ? queue.jobFor(video.id) : undefined)
-  const phase = $derived(video ? videoState(video, job, clock.now) : null)
+  const live = $derived(video ? queue.jobFor(video.id) : undefined)
+  const job = $derived(video?.job ?? null)
+  const phase = $derived(video ? videoState(video, live, clock.now) : null)
   const archived = $derived(video?.status === 'archived')
   const channelId = $derived(video?.channel?.id ?? null)
   const hasComments = $derived(!!video?.comments && video.comments.saved > 0)
@@ -68,7 +69,7 @@
   const pending = $derived(
     !!video && (video.status === 'downloading' || video.status === 'queued') && video.job_id != null
   )
-  const progress = $derived(job?.progress ?? null)
+  const progress = $derived(live?.progress ?? null)
 
   $effect(() => {
     void ui.videosVersion
@@ -404,7 +405,7 @@
                 <a class="ttl" href={href(`/video/${item.id}`)}>
                   {#if item.unavailable}<i class="lz" aria-hidden="true"></i>{/if}{item.title}
                 </a>
-                <div class="meta">{dmy(item.published_at)} · <StatusWord status={item.status} videoId={item.id} /></div>
+                <div class="meta">{dmy(item.published_at)} · <StatusWord status={item.status} videoId={item.id} job={item.job} /></div>
               </div>
             </li>
           {/each}

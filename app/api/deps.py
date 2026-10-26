@@ -53,6 +53,18 @@ def channel_ref(row: dict[str, Any], prefix: str = "channel_") -> dict[str, Any]
     }
 
 
+def active_job(row: dict[str, Any]) -> dict[str, Any] | None:
+    """The latest download job while it is queued, paused or running."""
+    if row["job_status"] not in ("queued", "paused", "running"):
+        return None
+    return {
+        "status": row["job_status"],
+        "run_after": row["job_run_after"],
+        "attempts": row["job_attempts"],
+        "error": row["job_error"],
+    }
+
+
 def video_out(row: dict[str, Any]) -> dict[str, Any]:
     video_id = row["id"]
     fps = row["fps"]
@@ -70,6 +82,7 @@ def video_out(row: dict[str, Any]) -> dict[str, Any]:
         "video_type": row["video_type"],
         "status": row["status"],
         "job_id": row["job_id"],
+        "job": active_job(row),
         "error": row["job_error"] if row["status"] == "failed" else None,
         "unavailable": row["unavailable_at"] is not None,
         "unavailable_at": row["unavailable_at"],

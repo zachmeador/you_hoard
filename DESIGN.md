@@ -62,7 +62,7 @@ Migrations live in `app/migrations/NNN_name.sql` and are tracked with `PRAGMA us
 | `settings` | Runtime settings as JSON values: library download defaults (quality, subtitle languages, auto captions, comments, audio languages, live chat, SponsorBlock), concurrency, default check interval, days removed files stay in the trash. |
 | `users`, `sessions` | One account; sessions store a SHA-256 of the token. |
 
-A video's status is derived (`app/library.py`): `archived` (has a file) → `downloading` / `queued` (latest download job) → `deleted` → `failed` → `missing` (known, not archived, nothing pending).
+A video's status is derived (`app/library.py`): `archived` (has a file) → `downloading` / `queued` (latest download job) → `deleted` → `failed` → `missing` (known, not archived, nothing pending). While that job is queued, paused or running, videos and inventory entries also carry it as `job` (status, `run_after`, attempts, error), which tells a paused or waiting video from one that is up next.
 
 ## Subscriptions
 

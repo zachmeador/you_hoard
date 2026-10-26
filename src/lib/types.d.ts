@@ -42,6 +42,7 @@ export interface Video {
   video_type: VideoType
   status: VideoStatus
   job_id: number | null
+  job: JobState | null
   error: string | null
   unavailable: boolean
   unavailable_at: string | null
@@ -301,6 +302,7 @@ export interface Entry {
   removed_at: string | null
   video_id: number | null
   status: EntryStatus
+  job: JobState | null
   channel_name?: string | null
   view_count?: number | null
 }
@@ -317,6 +319,14 @@ export type JobKind = 'download' | 'check' | 'scan'
 export type JobStatus = 'queued' | 'paused' | 'running' | 'completed' | 'failed' | 'cancelled'
 /** What a job list can filter by: `queued` is ready to run, `waiting` is queued until its `run_after`. */
 export type JobFilter = JobStatus | 'waiting'
+
+/** A video's download job while it is queued, paused or running. */
+export interface JobState {
+  status: JobStatus
+  run_after: string | null
+  attempts: number
+  error: string | null
+}
 
 export interface JobProgress {
   phase: 'downloading' | 'processing'

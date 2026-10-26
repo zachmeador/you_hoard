@@ -51,7 +51,7 @@
   <dl class="kv">
     <dt>Status</dt>
     <dd>
-      <StatusWord status={video.status} videoId={video.id} />
+      <StatusWord status={video.status} videoId={video.id} job={video.job} />
       {#if archived && video.archived_at}<span class="muted">{isoTime(video.archived_at)}</span>{/if}
     </dd>
     <dt>YouTube</dt>

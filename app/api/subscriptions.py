@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import (
+    active_job,
     art_url,
     clean_languages,
     get_db,
@@ -385,7 +386,8 @@ async def check_subscription(
 
 
 ENTRY_SELECT = """
-SELECT e.*, v.id AS video_id, coalesce(s.status, 'not_selected') AS status
+SELECT e.*, v.id AS video_id, coalesce(s.status, 'not_selected') AS status,
+       s.job_status, s.job_error, s.job_run_after, s.job_attempts
 FROM source_entries e
 LEFT JOIN videos v ON v.youtube_id = e.youtube_id
 LEFT JOIN video_status s ON s.video_id = v.id
@@ -435,7 +437,11 @@ async def list_entries(
     )
     own_channel = sub["channel_name"] if sub["kind"] == "channel" else None
     items = [
-        {**{key: row[key] for key in keys}, "channel_name": row["channel_name"] or own_channel}
+        {
+            **{key: row[key] for key in keys},
+            "channel_name": row["channel_name"] or own_channel,
+            "job": active_job(row),
+        }
         for row in rows
     ]
     return {"items": items, "total": total, "page": page, "per_page": per_page}

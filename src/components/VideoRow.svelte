@@ -47,14 +47,14 @@
     {/if}
     <div class="m-meta">
       {dmy(video.published_at)}{video.duration ? ` · ${dur(video.duration)}` : ''}<br />
-      <StatusWord status={video.status} videoId={video.id} />
+      <StatusWord status={video.status} videoId={video.id} job={video.job} />
       {#if file}<span class="sep">·</span> {file}{/if}
       {#if video.watched_at}<span class="sep">·</span> watched{/if}
     </div>
   </td>
   <td class="num c-pub">{isoDate(video.published_at)}</td>
   <td class="num c-len">{video.duration ? dur(video.duration) : '—'}</td>
-  <td class="c-st"><StatusWord status={video.status} videoId={video.id} bar /></td>
+  <td class="c-st"><StatusWord status={video.status} videoId={video.id} job={video.job} bar /></td>
   <td class="num c-file">{file || '—'}</td>
   <td class="num c-arch">{video.archived_at ? isoDate(video.archived_at) : '—'}</td>
   <td class="c-seen">

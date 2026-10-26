@@ -1,14 +1,14 @@
 <script>
-  /** @import { VideoStatus } from '../lib/types' */
+  /** @import { JobState, VideoStatus } from '../lib/types' */
   import { percent, whenShort } from '../lib/format.js'
   import { queue } from '../lib/queue.svelte.js'
   import { videoState } from '../lib/status.js'
   import { clock } from '../lib/ui.svelte.js'
 
-  /** @type {{ status: VideoStatus, videoId?: number | null, bar?: boolean }} */
-  let { status, videoId = null, bar = false } = $props()
+  /** @type {{ status: VideoStatus, videoId?: number | null, job?: JobState | null, bar?: boolean }} */
+  let { status, videoId = null, job = null, bar = false } = $props()
 
-  const phase = $derived(videoState({ status }, videoId == null ? undefined : queue.jobFor(videoId), clock.now))
+  const phase = $derived(videoState({ status, job }, videoId == null ? undefined : queue.jobFor(videoId), clock.now))
 </script>
 
 {#if phase.key === 'archived'}

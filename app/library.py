@@ -20,7 +20,7 @@ AVAILABILITIES = {
 }
 
 VIDEO_SELECT = """
-SELECT v.*, s.status, s.job_id, s.job_status, s.job_error,
+SELECT v.*, s.status, s.job_id, s.job_status, s.job_error, s.job_run_after, s.job_attempts,
        c.youtube_id AS channel_youtube_id, c.name AS channel_name
 FROM videos v
 JOIN video_status s ON s.video_id = v.id

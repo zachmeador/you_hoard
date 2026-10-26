@@ -14,5 +14,5 @@
 {:else if entry.status === 'not_selected'}
   <span class="st notsel">Not selected</span>
 {:else}
-  <StatusWord status={entry.status} videoId={entry.video_id} bar />
+  <StatusWord status={entry.status} videoId={entry.video_id} job={entry.job} bar />
 {/if}
