@@ -386,7 +386,8 @@ kbd {
   place-items: center;
   cursor: pointer;
 }
-.chk input:checked {
+.chk input:checked,
+.chk input:indeterminate {
   background: var(--ink-2);
   border-color: var(--ink-2);
 }
@@ -397,6 +398,14 @@ kbd {
   border-left: 1.5px solid var(--bg);
   border-bottom: 1.5px solid var(--bg);
   transform: translateY(-1px) rotate(-45deg);
+}
+.chk input:indeterminate::after {
+  content: '';
+  width: 7px;
+  height: 0;
+  border: 0;
+  border-top: 1.5px solid var(--bg);
+  transform: none;
 }
 
 .prog {

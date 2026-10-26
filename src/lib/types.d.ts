@@ -315,6 +315,8 @@ export interface EntryQuery {
 
 export type JobKind = 'download' | 'check' | 'scan'
 export type JobStatus = 'queued' | 'paused' | 'running' | 'completed' | 'failed' | 'cancelled'
+/** What a job list can filter by: `queued` is ready to run, `waiting` is queued until its `run_after`. */
+export type JobFilter = JobStatus | 'waiting'
 
 export interface JobProgress {
   phase: 'downloading' | 'processing'
@@ -353,7 +355,8 @@ export interface JobList {
 }
 
 export interface JobQuery {
-  status?: string
+  /** Several filters match any of them. */
+  status?: JobFilter | JobFilter[]
   kind?: string
   limit?: number
   offset?: number

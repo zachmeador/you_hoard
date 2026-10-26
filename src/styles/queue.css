@@ -1,4 +1,7 @@
 /* ---------- queue ---------- */
+:root {
+  --qsel-h: 44px;
+}
 .qsum {
   display: grid;
   grid-template-columns: auto auto 1fr;
@@ -47,6 +50,32 @@
 }
 .qtabs {
   margin-top: 4px;
+}
+.qsel {
+  position: sticky;
+  top: var(--stick);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px 18px;
+  height: var(--qsel-h);
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+}
+.qsel .more-btn {
+  margin: 0;
+}
+.qsel .more-btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.qsel .acts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.qsel ~ .tbl th {
+  top: calc(var(--stick) + var(--qsel-h));
 }
 .run {
   display: grid;
@@ -103,6 +132,17 @@
   background: var(--bg-1);
   box-shadow: inset 0 0 0 1px var(--rule-2);
   color: var(--ink-3);
+}
+.q .c-pick {
+  width: 36px;
+}
+.q .c-pick .chk {
+  display: flex;
+  padding: 8px 8px 8px 0;
+  margin: -8px 0;
+}
+.tbl.q tbody tr.picked td {
+  background: var(--bg-2);
 }
 .q .c-pos {
   width: 48px;

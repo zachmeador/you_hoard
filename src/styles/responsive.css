@@ -248,6 +248,33 @@
   .tbl.stack .row-err {
     white-space: normal;
   }
+  .tbl.stack.pick tr {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 4px;
+  }
+  .tbl.stack.pick td.c-pick {
+    grid-column: 1;
+    grid-row: 1;
+    padding-top: 2px;
+  }
+  .tbl.stack.pick td.c-main {
+    grid-column: 2;
+  }
+  .tbl.stack.pick td.c-side {
+    grid-column: 3;
+    margin-left: 8px;
+  }
+  .tbl.stack.pick tr.picked {
+    background: var(--bg-2);
+    box-shadow:
+      -8px 0 0 var(--bg-2),
+      8px 0 0 var(--bg-2);
+  }
+  .qsel {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 6px 0;
+  }
   .subs .hold-cell {
     margin-top: 8px;
   }

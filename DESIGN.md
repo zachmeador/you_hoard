@@ -121,7 +121,7 @@ JSON under `/api`; the OpenAPI schema is at `/docs`. Auth is an HttpOnly session
 | `/api/videos` | list/filter/sort, `counts`, get (with chapters, heatmap, SponsorBlock segments, subtitles, files), `resolve` and add by URL, download with per-video options, remove local files (into the trash) and `restore` them, watched, `media` (range requests), `thumbnail`, `subtitles/{lang}`, `comments`, `chat` |
 | `/api/channels` | list with counts and sorting, get, `avatar`, `banner` |
 | `/api/subscriptions` | `resolve`, create, list, get, update, delete, `check`, `entries`, download one entry |
-| `/api/jobs` | list with live progress, cancel, retry, pause, resume, remove, clear finished, retry failed |
+| `/api/jobs` | list with live progress (filter by `kind` and repeated `status`; `waiting` is queued until its `run_after`), `ids` of a filter, cancel, retry, pause and resume (one job, or many by id), remove, clear finished, retry failed |
 | `/api/settings`, `/api/system`, `/api/library/rescan` | runtime settings, versions/disk/library/trash stats, rescan (`force` skips the missing-files check) |
 
 ## Frontend

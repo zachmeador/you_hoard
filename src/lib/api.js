@@ -75,11 +75,16 @@ export async function request(method, path, body) {
   return data
 }
 
-/** @param {Record<string, string | number | boolean | null | undefined>} params */
+/**
+ * A query string. Array values repeat the key (`status=a&status=b`); empty values are left out.
+ * @param {Record<string, string | number | boolean | null | undefined | (string | number)[]>} params
+ */
 export function qs(params) {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null && value !== '') search.set(key, String(value))
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (item !== undefined && item !== null && item !== '') search.append(key, String(item))
+    }
   }
   const s = search.toString()
   return s ? `?${s}` : ''
@@ -257,6 +262,24 @@ export const api = {
     clearFinished: () => request('POST', '/jobs/clear'),
     /** @returns {Promise<{ retried: number }>} */
     retryFailed: () => request('POST', '/jobs/retry-failed'),
+    /**
+     * The ids of every job a query matches, without a page limit.
+     * @param {Omit<T.JobQuery, 'limit' | 'offset'>} query
+     * @returns {Promise<{ ids: number[] }>}
+     */
+    ids: (query) => request('GET', '/jobs/ids' + qs({ ...query })),
+    /**
+     * Pause the queued and waiting jobs among `ids`; others are left alone.
+     * @param {number[]} ids
+     * @returns {Promise<{ paused: number }>}
+     */
+    pauseMany: (ids) => request('POST', '/jobs/pause', { ids }),
+    /**
+     * Resume the paused jobs among `ids`, except downloads of videos already archived.
+     * @param {number[]} ids
+     * @returns {Promise<{ resumed: number }>}
+     */
+    resumeMany: (ids) => request('POST', '/jobs/resume', { ids }),
     /**
      * End a bot-check pause early.
      * @returns {Promise<{ ok: boolean }>}

@@ -1,6 +1,5 @@
 /** @import { Job, JobCounts } from './types' */
 import { api } from './api.js'
-import { isWaiting } from './jobs.js'
 
 const PAGE = 200
 const MAX_PAGES = 5
@@ -46,12 +45,14 @@ class QueueState {
   async refresh() {
     const res = await api.jobs.list({ status: 'running', limit: 50 })
     const held = []
-    if (res.counts.paused > 0) held.push(...(await api.jobs.list({ status: 'paused', limit: PAGE })).items)
+    if (res.counts.paused > 0) {
+      held.push(...(await api.jobs.list({ status: 'paused', kind: 'download', limit: PAGE })).items)
+    }
     if (res.counts.waiting > 0) held.push(...(await this.#waiting(res.counts.waiting)))
     this.counts = { ...emptyCounts(), ...res.counts }
     this.youtubePausedUntil = res.youtube_paused_until ?? null
     this.running = res.items
-    this.held = held.filter((j) => j.kind === 'download')
+    this.held = held
   }
 
   /** @param {number} wanted */
@@ -59,8 +60,8 @@ class QueueState {
     /** @type {Job[]} */
     const found = []
     for (let page = 0; page < MAX_PAGES && found.length < wanted; page++) {
-      const res = await api.jobs.list({ status: 'queued', limit: PAGE, offset: page * PAGE })
-      found.push(...res.items.filter((j) => isWaiting(j)))
+      const res = await api.jobs.list({ status: 'waiting', kind: 'download', limit: PAGE, offset: page * PAGE })
+      found.push(...res.items)
       if ((page + 1) * PAGE >= res.total) break
     }
     return found

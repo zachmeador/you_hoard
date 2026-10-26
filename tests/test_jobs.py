@@ -5,6 +5,22 @@ import asyncio
 from app.youtube import Unavailable, YouTubeError
 from tests.test_library import OTHER, VIDEO, add
 
+QUEUED = ("queue000001", "queue000002", "queue000003", "queue000004")
+LATER = "2099-01-01T00:00:00Z"
+SOONER = "2098-01-01T00:00:00Z"
+
+
+def hold_queue(archive, queued=3):
+    """A download held while it runs, with more queued behind it. Returns their videos."""
+    archive.youtube.hold.set()
+    archive.client.put("/api/settings", json={"max_concurrent_downloads": 1})
+    videos = []
+    for youtube_id in (VIDEO, *QUEUED[:queued]):
+        archive.youtube.add(youtube_id)
+        videos.append(add(archive, youtube_id))
+    archive.wait_job(videos[0]["job_id"], "running")
+    return videos
+
 
 def test_transient_failures_back_off_then_fail(archive):
     archive.youtube.add(VIDEO)
@@ -84,6 +100,65 @@ def test_pause_resume_and_one_active_job_per_video(archive):
     counts = archive.client.get("/api/jobs").json()["counts"]
     assert counts["completed"] == 2
     assert archive.client.post("/api/jobs/clear").json() == {"cleared": 2}
+
+
+def test_bulk_pause_and_resume_skip_jobs_in_the_wrong_state(archive):
+    videos = hold_queue(archive)
+    ids = [video["job_id"] for video in videos]
+    running, waiting, second, third = ids
+    archive.sql("UPDATE jobs SET run_after = ? WHERE id = ?", (LATER, waiting))
+
+    def states():
+        by_id = {job["id"]: job["status"] for job in archive.jobs()}
+        return [by_id[job_id] for job_id in ids]
+
+    def post(action, *job_ids):
+        response = archive.client.post(f"/api/jobs/{action}", json={"ids": list(job_ids)})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    assert states() == ["running", "queued", "queued", "queued"]
+    assert post("pause", running, waiting, second, 9999) == {"paused": 2}
+    assert states() == ["running", "paused", "paused", "queued"]
+    assert archive.job(waiting)["run_after"] == LATER
+    assert post("pause", waiting, second) == {"paused": 0}
+
+    archive.sql("UPDATE videos SET media_path = 'x.mp4' WHERE id = ?", (videos[1]["id"],))
+    assert post("resume", running, waiting, second, third, 9999) == {"resumed": 1}
+    assert states() == ["running", "paused", "queued", "queued"]
+    assert archive.client.post(f"/api/jobs/{waiting}/resume").status_code == 409
+
+    archive.youtube.hold.clear()
+    for job_id in (running, second, third):
+        archive.wait_job(job_id)
+    assert states() == ["completed", "paused", "completed", "completed"]
+
+    for action in ("pause", "resume"):
+        assert archive.client.post(f"/api/jobs/{action}", json={"ids": []}).status_code == 422
+
+
+def test_job_ids_list_the_selection_in_the_lists_order(archive):
+    videos = hold_queue(archive, queued=4)
+    running, waiting, paused, urgent, sooner = (video["job_id"] for video in videos)
+    archive.sql("UPDATE jobs SET run_after = ? WHERE id = ?", (LATER, waiting))
+    archive.sql("UPDATE jobs SET run_after = ? WHERE id = ?", (SOONER, sooner))
+    archive.sql("UPDATE jobs SET priority = 20 WHERE id = ?", (urgent,))
+    archive.client.post("/api/jobs/pause", json={"ids": [paused]})
+
+    def ids(**params):
+        response = archive.client.get("/api/jobs/ids", params=params)
+        assert response.status_code == 200, response.text
+        return response.json()["ids"]
+
+    assert ids() == [running, urgent, waiting, sooner, paused]
+    assert ids(status="queued") == [urgent]
+    assert ids(status="waiting") == [sooner, waiting]
+    assert ids(status=["waiting", "queued"]) == [urgent, waiting, sooner]
+    assert ids(status=["paused", "running"]) == [running, paused]
+    assert ids(kind="check") == []
+    for params in ({"status": "waiting"}, {"status": ["paused", "queued"]}, {"kind": "download"}):
+        assert ids(**params) == [job["id"] for job in archive.jobs(**params)]
+    assert archive.client.get("/api/jobs/ids", params={"status": "nope"}).status_code == 422
 
 
 def test_interrupted_jobs_resume_after_restart(archive):
