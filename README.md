@@ -15,7 +15,7 @@
 > [!WARNING]
 > **Project status: functional slop-cannon.** YouHoard works end to end: it follows channels, downloads, imports TubeArchivist libraries and plays everything back. But most of it was written fast by AI coding agents, it has tests rather than users, and parts of it haven't met real-world data yet. If you'd like to help turn the slop into software, PRs are very welcome. See [Contributing](#contributing).
 
-<!-- Screenshot: the library -->
+![The library in grid view](docs/screenshots/library.png)
 
 ## Why YouHoard
 
@@ -39,13 +39,15 @@ Videos disappear from YouTube all the time: channels get deleted, uploads go pri
 - Pick a policy: **Track only**, **New uploads**, **Latest N** or **Everything**.
 - Routine checks stop at the first uploads they already know, so they take seconds. Videos that vanish from a channel are marked in its inventory.
 
+![A channel subscription with its download policy, settings and inventory](docs/screenshots/subscription.png)
+
 **Watch**
 - A dense library with grid and list views, status tabs, search, filters and sorting.
 - A player with chapters, a most-replayed strip, SponsorBlock markers and labelled subtitle tracks.
 - Comments (top or newest, with replies) and live chat replay next to the video.
 - Watched marks, dark and light themes, and a layout that works on a phone.
 
-<!-- Screenshot: a video page -->
+![A video page with the player, chapters, details and subtitles](docs/screenshots/video-page.png)
 
 **Run**
 - A live queue with progress, pause, cancel and retry. Failed downloads retry with backoff.
@@ -85,7 +87,11 @@ mkdir -p data
 docker compose up -d
 ```
 
-Open http://localhost:8000, create your account, and use **Add** to paste a channel, playlist or video URL. To update later, run `docker compose pull && docker compose up -d`. To build the image yourself instead, clone this repository, swap `image:` for `build: .`, and run `docker compose up -d --build`.
+Open http://localhost:8000, create your account, and use **Add** to paste a channel, playlist or video URL.
+
+![The Add dialog, choosing a download policy for a channel](docs/screenshots/add-channel.png)
+
+To update later, run `docker compose pull && docker compose up -d`. To build the image yourself instead, clone this repository, swap `image:` for `build: .`, and run `docker compose up -d --build`.
 
 > [!TIP]
 > YouTube breaks old yt-dlp releases regularly. With `YTDLP_UPDATE_ON_START=1` the container upgrades yt-dlp every time it starts, so a restart usually fixes a sudden wave of failed downloads.
