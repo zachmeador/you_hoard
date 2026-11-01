@@ -8,7 +8,7 @@ COPY index.html vite.config.js svelte.config.js jsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-FROM python:3.13-slim
+FROM python:3.15-slim
 COPY --from=ghcr.io/astral-sh/uv:0.13 /uv /usr/local/bin/uv
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
