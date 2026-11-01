@@ -1,14 +1,26 @@
 """The parts of the yt-dlp adapter the fake bypasses, run offline against yt-dlp's own selector."""
 
 import asyncio
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
 from app import youtube
-from app.tracks import extra_audio, fits_mp4
-from app.youtube import YouTube, _channel_source, _entry, channel_art, format_selector
+from app.tracks import AUTO, TRANSLATED, UPLOADED, Track, extra_audio, fits_mp4
+from app.youtube import (
+    DownloadRequest,
+    YouTube,
+    _channel_source,
+    _entry,
+    channel_art,
+    cookie_state,
+    format_selector,
+)
 
 
 def fmt(format_id: str, ext: str, **fields: Any) -> dict[str, Any]:
@@ -212,3 +224,109 @@ def test_images_come_over_https_within_limits(monkeypatch):
         fetch("https://yt3.invalid/missing")
     with pytest.raises(youtube.YouTubeError, match="https"):
         fetch("http://yt3.invalid/avatar")
+
+
+@pytest.fixture
+def captions(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """A local stand-in for YouTube's captions: "/ok" serves one and "/limited" answers 429."""
+    monkeypatch.setattr(youtube, "SUBTITLE_SLEEP", 0)
+    body = b"WEBVTT\n\n00:00.000 --> 00:01.000\nHi\n"
+
+    class Captions(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response({"/ok": 200, "/limited": 429}.get(self.path, 404))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Captions)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+
+
+def fetch_extras(
+    workdir: Path, captions: str, *wanted: tuple[str, str, str]
+) -> tuple[list[str], str | None]:
+    """Run the real extras step over (language, source, path); returns saved tracks, refusal."""
+    raw = raw_info([fmt("18", "mp4", vcodec="avc1.42001E", acodec="mp4a.40.2")])
+    raw["subtitles"], raw["automatic_captions"] = {}, {}
+    for lang, source, path in wanted:
+        group = "subtitles" if source == UPLOADED else "automatic_captions"
+        raw[group][lang] = [{"ext": "vtt", "url": f"{captions}{path}"}]
+    tracks = [Track(lang, lang, source) for lang, source, _ in wanted]
+    request = DownloadRequest("dQw4w9WgXcQ", workdir, None, [], False)
+    saved, refused = YouTube()._extras(raw, request, tracks, False, lambda: None)
+    return [track.lang for track in saved], refused
+
+
+@pytest.mark.parametrize("source", [UPLOADED, AUTO])
+def test_a_refused_subtitle_keeps_the_rest_and_says_what_youtube_answered(
+    tmp_path, captions, source
+):
+    saved, refused = fetch_extras(
+        tmp_path, captions, ("en", UPLOADED, "/ok"), ("de", source, "/limited")
+    )
+    assert saved == ["en"]
+    assert refused and "HTTP Error 429" in refused
+
+
+def test_a_refused_translation_is_only_a_lost_track(tmp_path, captions):
+    saved, refused = fetch_extras(
+        tmp_path, captions, ("en", UPLOADED, "/ok"), ("de", TRANSLATED, "/limited")
+    )
+    assert (saved, refused) == (["en"], None)
+
+
+def test_a_track_that_fails_for_another_reason_is_not_a_refusal(tmp_path, captions):
+    assert fetch_extras(tmp_path, captions, ("de", UPLOADED, "/missing")) == ([], None)
+
+
+def cookie_file(path: Path, *lines: str) -> Path:
+    path.write_text("# Netscape HTTP Cookie File\n" + "".join(lines))
+    return path
+
+
+def cookie(name: str, domain: str = ".youtube.com", expires: int = 4102444800) -> str:
+    return f"{domain}\tTRUE\t/\tTRUE\t{expires}\t{name}\tvalue\n"
+
+
+@pytest.mark.parametrize(
+    ("lines", "state"),
+    [
+        ([cookie("LOGIN_INFO"), cookie("SAPISID")], "signed_in"),
+        ([cookie("LOGIN_INFO"), cookie("__Secure-3PAPISID")], "signed_in"),
+        (["#HttpOnly_" + cookie("LOGIN_INFO"), cookie("__Secure-1PAPISID")], "signed_in"),
+        ([cookie("VISITOR_INFO1_LIVE")], "anonymous"),
+        ([cookie("LOGIN_INFO")], "anonymous"),
+        ([cookie("SAPISID")], "anonymous"),
+        ([cookie("LOGIN_INFO", expires=1000), cookie("SAPISID")], "anonymous"),
+        ([cookie("LOGIN_INFO", ".example.com"), cookie("SAPISID", ".example.com")], "anonymous"),
+    ],
+    ids=[
+        "session",
+        "secure",
+        "http only",
+        "visitor",
+        "rotated",
+        "no login",
+        "expired",
+        "elsewhere",
+    ],
+)
+def test_a_cookie_file_is_signed_in_by_the_same_test_yt_dlp_uses(tmp_path, lines, state):
+    assert cookie_state(cookie_file(tmp_path / "cookies.txt", *lines)) == state
+
+
+def test_a_cookie_file_that_is_not_netscape_format_is_unreadable(tmp_path):
+    exported = tmp_path / "cookies.json"
+    exported.write_text('[{"name": "LOGIN_INFO", "value": "value"}]')
+    assert cookie_state(exported) == "unreadable"
+
+
+def test_no_cookie_file_is_no_cookies(tmp_path):
+    assert cookie_state(None) == "none"
+    assert cookie_state(tmp_path / "missing.txt") == "none"

@@ -1,4 +1,5 @@
 /** @import * as T from './types' */
+import { whenShort } from './format.js'
 
 export class ApiError extends Error {
   /**
@@ -27,6 +28,7 @@ export function errorMessage(error) {
 
 /** @param {any} data */
 function detailMessage(data) {
+  if (data?.resumes_at) return `YouTube is paused until ${whenShort(data.resumes_at)}`
   const detail = data?.detail
   if (typeof detail === 'string') return detail
   if (Array.isArray(detail)) {
@@ -281,7 +283,13 @@ export const api = {
      */
     resumeMany: (ids) => request('POST', '/jobs/resume', { ids }),
     /**
-     * End a bot-check pause early.
+     * Hold all YouTube work for a while.
+     * @param {number} hours
+     * @returns {Promise<{ ok: boolean }>}
+     */
+    pauseYoutube: (hours) => request('POST', '/jobs/pause-youtube', { hours }),
+    /**
+     * End a pause early.
      * @returns {Promise<{ ok: boolean }>}
      */
     resumeYoutube: () => request('POST', '/jobs/resume-youtube')

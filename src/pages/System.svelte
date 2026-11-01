@@ -4,7 +4,7 @@
   import { api } from '../lib/api.js'
   import { copyText } from '../lib/clipboard.js'
   import { confirmAction } from '../lib/confirm.svelte.js'
-  import { bytes, int, interval, parseTime, qualityLabel, rel } from '../lib/format.js'
+  import { bytes, int, interval, qualityLabel, rel } from '../lib/format.js'
   import { jobResult } from '../lib/jobs.js'
   import { Loader } from '../lib/loader.svelte.js'
   import { poll } from '../lib/poll.js'
@@ -28,7 +28,6 @@
   const largest = new Loader()
   /** @type {Loader<{ items: Job[] }>} */
   const scans = new Loader()
-  let botChecks = $state(0)
 
   const info = $derived(system.info)
   const dirty = $derived(JSON.stringify(form) !== JSON.stringify(saved))
@@ -71,13 +70,6 @@
     system.refresh().catch(() => {})
     largest.run(() => api.channels.list({ sort: 'size', per_page: 8 }))
     loadScans()
-    api.jobs
-      .list({ kind: 'download', status: 'failed', limit: 200 })
-      .then((res) => {
-        const since = Date.now() - 86400000
-        botChecks = res.items.filter((j) => /bot/i.test(j.error ?? '') && (parseTime(j.finished_at)?.getTime() ?? 0) > since).length
-      })
-      .catch(() => {})
     return poll(
       async () => {
         await system.refresh()
@@ -321,12 +313,18 @@
             <span class="x"></span>
           </li>
           <li>
-            <span class="mk" class:warn={!info.cookies && botChecks > 0}></span>
+            <span
+              class="mk"
+              class:warn={info.cookies === 'unreadable' || (info.cookies !== 'signed_in' && info.youtube_refusals > 0)}
+            ></span>
             <span class="k">Cookies</span>
             <span class="v">
-              {#if info.cookies}Loaded
-              {:else}None loaded{#if botChecks > 0}<small>
-                  {botChecks} bot {botChecks === 1 ? 'check' : 'checks'} in the last 24 h. Set YTDLP_COOKIE_FILE if they continue.
+              {#if info.cookies === 'signed_in'}Loaded, signed in
+              {:else if info.cookies === 'unreadable'}Can't be read<small>
+                  YTDLP_COOKIE_FILE needs to be a Netscape-format cookies file.
+                </small>
+              {:else}{info.cookies === 'anonymous' ? 'Loaded, not signed in' : 'None loaded'}{#if info.youtube_refusals > 0}<small>
+                  YouTube has refused {info.youtube_refusals} {info.youtube_refusals === 1 ? 'request' : 'requests'} in a row. Set YTDLP_COOKIE_FILE if it continues.
                 </small>{/if}{/if}
             </span>
             <span class="x"></span>

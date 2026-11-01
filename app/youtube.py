@@ -6,6 +6,7 @@ Tests replace `YouTube` with a fake that has the same async methods.
 import asyncio
 import copy
 import functools
+import http.cookiejar
 import logging
 import re
 import threading
@@ -18,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import yt_dlp
+from yt_dlp.cookies import YoutubeDLCookieJar
 from yt_dlp.globals import supported_js_runtimes
 from yt_dlp.postprocessor import SponsorBlockPP
 from yt_dlp.utils import DownloadCancelled
@@ -26,6 +28,7 @@ from app.config import config
 from app.layout import VIDEO_ID, YOUTUBE_CHANNEL_ID
 from app.tracks import (
     LIVE_CHAT,
+    TRANSLATED,
     UPLOADED,
     Track,
     extra_audio,
@@ -60,11 +63,14 @@ SPONSOR_CATEGORIES = [
     "poi_highlight",
 ]
 MAX_IMAGE_BYTES = 12_000_000
+# With LOGIN_INFO, any of these makes a session signed in, by yt-dlp's reckoning.
+SESSION_COOKIES = {"SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"}
 
 # Ordered checks against yt-dlp's error text; first match wins.
 WAITING = ("will begin", "premieres in", "premiere will begin")
 BLOCKED = (
-    "sign in to confirm you",
+    "not a bot",
+    "captcha",
     "try again later",
     "http error 429",
     "too many requests",
@@ -153,6 +159,25 @@ def classify(error: Exception) -> YouTubeError:
         if any(word in lowered for word in words):
             return kind(text)
     return YouTubeError(text)
+
+
+class ExtrasLogger(YtDlpLogger):
+    """Keeps what YouTube refused too, since subtitles and chat carry on past a failure."""
+
+    def __init__(self) -> None:
+        self.refusal: str | None = None
+
+    def warning(self, message: str) -> None:
+        super().warning(message)
+        self._note(message)
+
+    def error(self, message: str) -> None:
+        super().error(message)
+        self._note(message)
+
+    def _note(self, message: str) -> None:
+        if isinstance(classify(Exception(message)), Blocked):
+            self.refusal = message
 
 
 def youtube_url(value: str) -> str:
@@ -470,7 +495,8 @@ class YouTube:
 
         The video and its audio tracks come first and can fail the download. Subtitles, live chat
         and SponsorBlock segments follow on a best-effort basis, so a failure there costs only
-        the extra. The info's `_youhoard.subtitles` lists the tracks that were saved.
+        the extra. The info's `_youhoard.subtitles` lists the tracks that were saved, and
+        `_youhoard.refused` says what YouTube answered if it refused one that matters.
         """
 
         def check_cancelled() -> None:
@@ -539,10 +565,13 @@ class YouTube:
             if comment_count is not None:
                 info["comment_count"] = comment_count  # yt-dlp replaces it with the number saved
             saved: list[Track] = []
+            refused = None
             if tracks or chat:
                 progress({"status": "processing"})
-                saved = self._extras(pristine, request, tracks, chat, check_cancelled)
+                saved, refused = self._extras(pristine, request, tracks, chat, check_cancelled)
             info["_youhoard"] = {"subtitles": [track.as_dict() for track in saved]}
+            if refused:
+                info["_youhoard"]["refused"] = refused
             if request.sponsorblock:
                 check_cancelled()
                 segments = self._segments(pristine)
@@ -571,8 +600,11 @@ class YouTube:
         tracks: list[Track],
         chat: bool,
         check_cancelled: Callable[[], None],
-    ) -> list[Track]:
-        """Fetch subtitles and live chat next to the media. Returns the tracks that were saved."""
+    ) -> tuple[list[Track], str | None]:
+        """Fetch subtitles and live chat next to the media. Returns the tracks that were saved,
+        and what YouTube said if it refused one. A refused translation doesn't count: YouTube
+        limits those heavily on their own, so losing one says little about the connection."""
+        log = ExtrasLogger()
         languages = [re.escape(track.lang) for track in tracks]
         if chat:
             languages.append(LIVE_CHAT)
@@ -581,6 +613,7 @@ class YouTube:
             ignore_no_formats_error=True,
             skip_download=True,
             ignoreerrors=True,
+            logger=log,
             paths={"home": str(request.workdir), "temp": str(request.workdir)},
             outtmpl={"default": "media.%(ext)s"},
             writesubtitles=True,
@@ -599,10 +632,13 @@ class YouTube:
         except DownloadCancelled:
             raise
         except Exception as error:
-            logger.warning("Subtitles for %s failed: %s", request.youtube_id, error)
-        return [
+            log.warning(f"Subtitles for {request.youtube_id} failed: {error}")
+        saved = [
             track for track in tracks if (request.workdir / f"media.{track.lang}.vtt").is_file()
         ]
+        lost = {track.source for track in tracks if track not in saved} - {TRANSLATED}
+        lost_chat = chat and not (request.workdir / "media.live_chat.json").is_file()
+        return saved, log.refusal if lost or lost_chat else None
 
     def _segments(self, raw: dict[str, Any]) -> list[dict[str, Any]] | None:
         """SponsorBlock segments for the video, or None if the lookup failed."""
@@ -625,6 +661,24 @@ class YouTube:
 
     def versions(self) -> dict[str, str | None]:
         return runtime_versions()
+
+
+def cookie_state(path: Path | None) -> str:
+    """What a cookie file offers, as far as can be told without asking YouTube: "none",
+    "unreadable", "anonymous" or "signed_in"."""
+    if not path or not path.is_file():
+        return "none"
+    jar = YoutubeDLCookieJar(str(path))
+    try:
+        jar.load()
+    except (OSError, ValueError, http.cookiejar.LoadError):
+        return "unreadable"
+    names = {
+        cookie.name
+        for cookie in jar
+        if cookie.domain.endswith("youtube.com") and not cookie.is_expired()
+    }
+    return "signed_in" if "LOGIN_INFO" in names and names & SESSION_COOKIES else "anonymous"
 
 
 @functools.cache

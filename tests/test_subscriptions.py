@@ -1,5 +1,7 @@
 """Subscriptions keep an inventory; download policies decide what gets archived."""
 
+import pytest
+
 from tests.fake_youtube import CHANNEL_ID, OTHER_CHANNEL_ID, PLAYLIST_ID
 
 CHANNEL_URL = "https://www.youtube.com/@fixture"
@@ -285,3 +287,45 @@ def test_playlist_downloads_queued_by_policy_also_know_their_channel(archive):
     assert videos[0]["channel"]["name"] == "Someone Else"
     archive.youtube.hold.clear()
     archive.wait_idle()
+
+
+@pytest.mark.parametrize(
+    "change", [{"download_policy": "none"}, {"enabled": False}], ids=["policy", "disabled"]
+)
+def test_switching_a_subscription_off_pauses_what_its_policy_queued(archive, change):
+    videos = ids("vid", 3)
+    seed_tab(archive, "video", videos)
+    sub = subscribe(archive)
+    path = f"/api/subscriptions/{sub['id']}"
+    runner = archive.app.state.runner
+    archive.call(runner.stop)
+    response = archive.client.patch(path, json={"download_policy": "recent", "recent_count": 2})
+    assert response.status_code == 200
+    asked = archive.client.post(f"{path}/entries/{videos[2]}/download").json()["job_id"]
+
+    assert archive.client.patch(path, json=change).status_code == 200
+    jobs = {job["id"]: job["status"] for job in archive.jobs(kind="download")}
+    assert jobs.pop(asked) == "queued"  # asked for by hand, so it stays
+    assert list(jobs.values()) == ["paused", "paused"]
+
+    archive.call(runner.start)
+    archive.wait_job(asked)
+    assert [job["id"] for job in archive.jobs(status="paused")] == sorted(jobs)
+
+
+def test_a_later_edit_leaves_alone_a_job_resumed_by_hand(archive):
+    videos = ids("vid", 1)
+    seed_tab(archive, "video", videos)
+    sub = subscribe(archive)
+    path = f"/api/subscriptions/{sub['id']}"
+    runner = archive.app.state.runner
+    archive.call(runner.stop)
+    archive.client.patch(path, json={"download_policy": "all"})
+    archive.client.patch(path, json={"download_policy": "none"})
+    job = archive.jobs(kind="download")[0]
+    assert job["status"] == "paused"
+    assert archive.client.post(f"/api/jobs/{job['id']}/resume").status_code == 200
+
+    assert archive.client.patch(path, json={"check_interval_hours": 12}).status_code == 200
+    assert archive.job(job["id"])["status"] == "queued"
+    archive.call(runner.start)

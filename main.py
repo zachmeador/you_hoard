@@ -6,8 +6,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
@@ -15,6 +15,7 @@ from app.api import auth, channels, jobs, subscriptions, system, videos
 from app.auth import current_user
 from app.config import apply_umask, config
 from app.db import Database
+from app.gate import Paused, YouTubeGate
 from app.jobs import JobRunner
 from app.settings import Settings
 from app.youtube import YouTube
@@ -48,7 +49,8 @@ def create_app(youtube: YouTube | None = None) -> FastAPI:
         await db.migrate()
         app.state.db = db
         app.state.settings = Settings(db)
-        app.state.youtube = youtube or YouTube()
+        app.state.youtube = YouTubeGate(youtube or YouTube(), db)
+        await app.state.youtube.load()
         app.state.runner = JobRunner(db, app.state.youtube, app.state.settings)
         await app.state.runner.start()
         try:
@@ -57,6 +59,13 @@ def create_app(youtube: YouTube | None = None) -> FastAPI:
             await app.state.runner.stop()
 
     app = FastAPI(title="YouHoard", version=__version__, lifespan=lifespan)
+
+    @app.exception_handler(Paused)
+    async def youtube_paused(request: Request, error: Paused):
+        return JSONResponse(
+            status_code=503, content={"detail": str(error), "resumes_at": error.until}
+        )
+
     protected = [Depends(current_user)]
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(videos.router, prefix="/api/videos", tags=["videos"], dependencies=protected)

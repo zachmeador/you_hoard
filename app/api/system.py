@@ -14,10 +14,11 @@ from app import __version__, trash
 from app.api.deps import clean_languages, get_db, get_runner, get_settings, get_youtube
 from app.config import config
 from app.db import Database, now
+from app.gate import YouTubeGate
 from app.jobs import JobRunner
 from app.languages import language_options
 from app.settings import Settings
-from app.youtube import QUALITIES, YouTube
+from app.youtube import QUALITIES, cookie_state
 
 router = APIRouter()
 CHECK_INTERVALS = [1, 3, 6, 12, 24, 72, 168]
@@ -91,8 +92,7 @@ def ffmpeg_version() -> str | None:
 @router.get("/system")
 async def system_status(
     db: Database = Depends(get_db),
-    youtube: YouTube = Depends(get_youtube),
-    runner: JobRunner = Depends(get_runner),
+    youtube: YouTubeGate = Depends(get_youtube),
 ):
     versions = await asyncio.to_thread(youtube.versions)
     ffmpeg = await asyncio.to_thread(ffmpeg_version)
@@ -123,13 +123,13 @@ async def system_status(
         "yt_dlp": versions["yt_dlp"],
         "ffmpeg": ffmpeg,
         "js_runtime": versions["js_runtime"],
-        "cookies": bool(config.YTDLP_COOKIE_FILE and config.YTDLP_COOKIE_FILE.is_file()),
+        "cookies": await asyncio.to_thread(cookie_state, config.YTDLP_COOKIE_FILE),
         "media_dir": str(config.media_root),
         "disk": disk,
         "library": library,
         "queue": queue,
         "trash": await asyncio.to_thread(trash.summary),
-        "youtube_paused_until": runner.youtube_resumes_at,
+        **youtube.status,
     }
 
 

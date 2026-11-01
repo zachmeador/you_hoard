@@ -199,6 +199,16 @@ async def apply_policy(runner: JobRunner, conn: aiosqlite.Connection, subscripti
     return len(entries)
 
 
+async def pause_policy_downloads(conn: aiosqlite.Connection, subscription_id: int) -> None:
+    """The subscription stopped downloading, so what its policy queued stops too. Paused, not
+    cancelled, so nothing is lost. Downloads asked for one by one have a priority, and stay."""
+    await conn.execute(
+        "UPDATE jobs SET status = 'paused' WHERE status = 'queued' AND kind = 'download' "
+        "AND priority <= 0 AND json_extract(options, '$.subscription_id') = ?",
+        (subscription_id,),
+    )
+
+
 async def queue_entry_download(
     runner: JobRunner, conn: aiosqlite.Connection, sub: dict[str, Any], entry: dict[str, Any]
 ) -> tuple[int, int]:

@@ -77,6 +77,8 @@ Download policies:
 
 Channel subscriptions follow the selected tabs (`/videos`, `/shorts`, `/streams`), which also set each entry's type. Playlists take every entry. Upcoming and live entries are skipped until they finish. A video already in the library is never queued again by a check, including ones the user removed (`deleted_at`) or whose download failed (retry is explicit).
 
+Switching a subscription off, by disabling it or setting its policy to `none`, pauses the downloads its policy had queued, so they stop without being lost; they wait in the Queue page's Paused tab. Downloads asked for one by one stay queued.
+
 ## Downloads
 
 Download options resolve per video (the job's options), then per subscription, then library settings (`app/options.py`). They are resolved when the job runs, so editing a subscription affects its waiting downloads.
@@ -90,7 +92,18 @@ The job then moves the media, thumbnail (JPEG), subtitles (VTT), chat and `.info
 
 Transient failures retry with backoff (15 min, 1 h, 4 h) before failing. "Video unavailable"-type errors fail immediately and set `unavailable_at`. Running downloads can be cancelled.
 
-YouTube gets a gentle pace. Each download worker rests 10–30 s after a download, yt-dlp sleeps 0.75 s between extraction requests and 5 s between subtitle files, and a job's start is spaced from the last one by `YTDLP_REQUEST_INTERVAL`. A bot check (or 429) pauses all downloads and checks rather than letting each queued job run into it: the job goes back to the queue without using an attempt, queued YouTube jobs wait until the pause ends, and the scheduler queues no checks meanwhile. Pauses last 1, 2, 4, 8, then 12 hours while YouTube keeps refusing, and reset after a success. The Queue page shows the pause, with "Resume now" (`POST /api/jobs/resume-youtube`). The pause lives in memory; after a restart, queued jobs still wait for their `run_after`.
+YouTube gets a gentle pace. Each download worker rests 10–30 s after a download, yt-dlp sleeps 0.75 s between extraction requests and 5 s between subtitle files, and a job's start is spaced from the last one by `YTDLP_REQUEST_INTERVAL`.
+
+Every YouTube call goes through one gate (`app/gate.py`): downloads, checks and the API's URL lookups. A refusal from any of them pauses all of them, rather than letting each caller run into it. Refusals are a bot check, a CAPTCHA, a 429 or "try again later". A refused subtitle or live chat counts too, though its video is kept, because the next videos would lose theirs. A refused translated caption doesn't: YouTube limits those on their own, so losing one says little about the connection. While the gate is paused, calls are turned away before they reach YouTube:
+
+- a URL lookup answers 503;
+- a job goes back to the queue without using an attempt, and queued YouTube jobs show as waiting, retried ones included;
+- a running check stops at its next tab;
+- the scheduler queues no checks.
+
+A download that's already transferring finishes. A job YouTube refused also drops behind the others, so one video it won't serve can't hold up the queue. Pauses last 1, 2, 4, 8, then 12 hours while YouTube keeps refusing. Only a download or a lookup that begins after the latest refusal and goes through resets that ladder. Listings keep working through a bot check, so a check doesn't. An age-gated video isn't a refusal: it fails on its own, like other videos that need an account. The pause, the run of refusals and YouTube's last message are kept in the database, so a restart neither forgets the pause nor starts the ladder over. The Queue page shows the pause and what YouTube said, with "Resume now" (`POST /api/jobs/resume-youtube`), which ends the pause but keeps the count. It can also pause all YouTube work on request (`POST /api/jobs/pause-youtube`). Nothing was refused, so that doesn't climb the ladder, and a longer pause already running stands.
+
+System says what a cookie file offers without asking YouTube: whether it can be read, and whether it holds a signed-in session by yt-dlp's own test. Only using it shows whether YouTube accepts it.
 
 ## TubeArchivist import
 
@@ -121,7 +134,7 @@ JSON under `/api`; the OpenAPI schema is at `/docs`. Auth is an HttpOnly session
 | `/api/videos` | list/filter/sort, `counts`, get (with chapters, heatmap, SponsorBlock segments, subtitles, files), `resolve` and add by URL, download with per-video options, remove local files (into the trash) and `restore` them, watched, `media` (range requests), `thumbnail`, `subtitles/{lang}`, `comments`, `chat` |
 | `/api/channels` | list with counts and sorting, get, `avatar`, `banner` |
 | `/api/subscriptions` | `resolve`, create, list, get, update, delete, `check`, `entries`, download one entry |
-| `/api/jobs` | list with live progress (filter by `kind` and repeated `status`; `waiting` is queued until its `run_after`), `ids` of a filter, cancel, retry, pause and resume (one job, or many by id), remove, clear finished, retry failed |
+| `/api/jobs` | list with live progress (filter by `kind` and repeated `status`; `waiting` is queued until its `run_after`), `ids` of a filter, cancel, retry, pause and resume (one job, or many by id), remove, clear finished, retry failed, pause and resume all YouTube work |
 | `/api/settings`, `/api/system`, `/api/library/rescan` | runtime settings, versions/disk/library/trash stats, rescan (`force` skips the missing-files check) |
 
 ## Frontend

@@ -99,11 +99,12 @@ export function rel(value, now = Date.now()) {
   s = Math.abs(s)
   let out
   if (s < 45) return future ? 'in a moment' : 'just now'
-  if (s < 3600) out = `${Math.max(1, Math.round(s / 60))}m`
+  const minutes = Math.round(s / 60)
+  if (minutes < 60) out = `${Math.max(1, minutes)}m`
   else if (s < 86400) {
-    const h = Math.floor(s / 3600)
-    const m = Math.round((s % 3600) / 60)
-    out = h < 10 && m && m < 60 ? `${h}h ${m}m` : `${h}h`
+    const h = Math.floor(minutes / 60)
+    const m = minutes % 60
+    out = h < 10 && m ? `${h}h ${m}m` : `${h}h`
   } else if (s < 86400 * 45) out = `${Math.floor(s / 86400)}d`
   else return dmy(value)
   return future ? `in ${out}` : `${out} ago`

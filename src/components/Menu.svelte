@@ -1,9 +1,10 @@
 <script>
   /** @import { Snippet } from 'svelte' */
+  /** @import { IconName } from '../lib/icons.js' */
   import Icon from './Icon.svelte'
 
-  /** @type {{ label: string, children: Snippet<[() => void]> }} */
-  let { label, children } = $props()
+  /** @type {{ label: string, text?: string, icon?: IconName, children: Snippet<[() => void]> }} */
+  let { label, text, icon = 'more', children } = $props()
 
   let open = $state(false)
   /** @type {HTMLSpanElement | undefined} */
@@ -42,13 +43,13 @@
 <span class="menu-wrap" bind:this={wrap}>
   <button
     type="button"
-    class="btn icon sm quiet"
+    class={text ? 'btn' : 'btn icon sm quiet'}
     aria-haspopup="menu"
     aria-expanded={open}
     aria-label={label}
     onclick={() => (open = !open)}
   >
-    <Icon name="more" />
+    <Icon name={icon} />{text}
   </button>
   {#if open}
     <div class="menu open" role="menu" aria-label={label}>

@@ -4,7 +4,7 @@
   import { SvelteMap } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { bytes, dur, hm, int, JOB_KINDS, rel, whenShort } from '../lib/format.js'
-  import { isPremiere, isRetry, jobResult, jobTook, looksGone, shortReason } from '../lib/jobs.js'
+  import { isPremiere, isRetry, jobResult, jobTook, looksGone, refusalWords, shortReason } from '../lib/jobs.js'
   import { jobItemTitle } from '../lib/format.js'
   import { Loader } from '../lib/loader.svelte.js'
   import { poll } from '../lib/poll.js'
@@ -15,6 +15,7 @@
   import { clock } from '../lib/ui.svelte.js'
   import FilterTabs from '../components/FilterTabs.svelte'
   import Icon from '../components/Icon.svelte'
+  import Menu from '../components/Menu.svelte'
   import Pager from '../components/Pager.svelte'
   import RunningJob from '../components/RunningJob.svelte'
   import SelectField from '../components/SelectField.svelte'
@@ -36,6 +37,13 @@
     failed: 'failed',
     history: ['completed', 'cancelled']
   }
+  const PAUSES = [
+    { hours: 1, label: 'For an hour' },
+    { hours: 6, label: 'For 6 hours' },
+    { hours: 24, label: 'For a day' },
+    { hours: 72, label: 'For 3 days' },
+    { hours: 168, label: 'For a week' }
+  ]
   /** What "Select all" counts, by tab. */
   const NOUN = { waiting: 'waiting', queued: 'up next', paused: 'paused' }
 
@@ -190,10 +198,22 @@
     }
   }
 
+  /** @param {number} hours */
+  async function pauseYoutube(hours) {
+    try {
+      await api.jobs.pauseYoutube(hours)
+      notify.success('YouTube work paused')
+      await refresh(true)
+      queue.refresh().catch(() => {})
+    } catch (e) {
+      notify.error(e)
+    }
+  }
+
   async function resumeYoutube() {
     try {
       await api.jobs.resumeYoutube()
-      notify.success('Downloads and checks resumed')
+      notify.success('YouTube work resumed')
       await refresh(true)
       queue.refresh().catch(() => {})
     } catch (e) {
@@ -339,6 +359,22 @@
     <div class="k">combined speed</div>
   </div>
   <div class="bulk">
+    <Menu label="Pause all YouTube work" text="Pause YouTube" icon="clock">
+      {#snippet children(close)}
+        {#each PAUSES as pause (pause.hours)}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => {
+              close()
+              pauseYoutube(pause.hours)
+            }}
+          >
+            {pause.label}
+          </button>
+        {/each}
+      {/snippet}
+    </Menu>
     <button type="button" class="btn" disabled={queue.counts.failed === 0} onclick={retryFailed}>
       <Icon name="retry" />Retry failed
     </button>
@@ -357,9 +393,15 @@
   <div class="callout qpause">
     <Icon name="clock" class="mk" />
     <div>
-      <span class="ttl2">YouTube asked for a bot check</span>
-      Downloads and checks wait until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}),
-      instead of each one running into it. The wait grows if YouTube keeps asking.
+      {#if queue.youtubePauseReason}
+        <span class="ttl2">YouTube refused a request</span>
+        <q>{refusalWords(queue.youtubePauseReason)}</q>
+        Downloads, checks and lookups wait until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}),
+        instead of each one running into it. The wait grows if YouTube keeps refusing.
+      {:else}
+        <span class="ttl2">YouTube work is paused</span>
+        Downloads, checks and lookups wait until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}), as you asked.
+      {/if}
       <div class="acts">
         <button type="button" class="btn" onclick={resumeYoutube}>Resume now</button>
       </div>
@@ -437,13 +479,15 @@
                 {:else if isPremiere(job)}
                   Premiere
                 {:else}
-                  {job.error ?? ''}
+                  {refusalWords(job.error ?? '')}
                 {/if}
               </div>
               <div class="m-meta">Until {whenShort(job.run_after, clock.now)} ({rel(job.run_after, clock.now)})</div>
             </td>
             <td class="c-act c-side keep">
-              <button type="button" class="btn sm quiet" aria-label="Run now: {title}" onclick={() => runNow(job)}>Run now</button>
+              {#if !queue.youtubePausedUntil}
+                <button type="button" class="btn sm quiet" aria-label="Run now: {title}" onclick={() => runNow(job)}>Run now</button>
+              {/if}
               <button type="button" class="btn sm quiet" aria-label="Cancel {title}" onclick={() => jobAction(job, 'cancel')}>
                 <Icon name="x" />
               </button>

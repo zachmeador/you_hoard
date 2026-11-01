@@ -360,8 +360,12 @@ export interface JobList {
   items: Job[]
   total: number
   counts: JobCounts
-  /** Set while downloads and checks wait out a YouTube bot check. */
+  /** Set while YouTube work is paused. */
   youtube_paused_until: string | null
+  /** What YouTube said, while a refusal is why it's paused; null for a pause on request. */
+  youtube_pause_reason: string | null
+  /** Refusals in a row, until a video comes through. */
+  youtube_refusals: number
 }
 
 export interface JobQuery {
@@ -408,7 +412,8 @@ export interface SystemInfo {
   yt_dlp: string
   ffmpeg: string | null
   js_runtime: string | null
-  cookies: boolean
+  /** What the cookie file offers, as far as can be told without asking YouTube. */
+  cookies: 'none' | 'unreadable' | 'anonymous' | 'signed_in'
   media_dir: string
   disk: { total: number; used: number; free: number } | null
   library: {
@@ -422,4 +427,6 @@ export interface SystemInfo {
   queue: { queued: number; running: number; failed: number }
   trash: { videos: number; size: number }
   youtube_paused_until: string | null
+  youtube_pause_reason: string | null
+  youtube_refusals: number
 }

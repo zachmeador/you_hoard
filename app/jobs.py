@@ -13,8 +13,9 @@ import aiosqlite
 
 from app import trash
 from app.db import Database, dumps, fetch_one, from_timestamp, later, loads, now
+from app.gate import Paused, YouTubeGate
 from app.settings import Settings
-from app.youtube import Blocked, Cancelled, NotReady, YouTube, YouTubeError
+from app.youtube import Blocked, Cancelled, NotReady, YouTubeError
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +25,6 @@ TRASH_PURGE_SECONDS = 3600
 ACTIVE = ("queued", "paused", "running")
 # Jobs that talk to YouTube, and so wait out a bot check.
 YOUTUBE_KINDS = ("download", "check")
-# How long YouTube work waits after a bot check, longer each time YouTube refuses again.
-BLOCK_PAUSES = (3600, 2 * 3600, 4 * 3600, 8 * 3600, 12 * 3600)
 # Seconds a download worker rests after each download, so a backlog doesn't arrive back to back.
 DOWNLOAD_REST = (10.0, 30.0)
 Handler = Callable[["JobRunner", dict[str, Any], threading.Event], Awaitable[dict[str, Any]]]
@@ -64,7 +63,7 @@ class Progress:
 
 
 class JobRunner:
-    def __init__(self, db: Database, youtube: YouTube, settings: Settings) -> None:
+    def __init__(self, db: Database, youtube: YouTubeGate, settings: Settings) -> None:
         self.db = db
         self.youtube = youtube
         self.settings = settings
@@ -74,19 +73,7 @@ class JobRunner:
         self._tasks: list[asyncio.Task[None]] = []
         self._wake = asyncio.Event()
         self._stopping = False
-        # After a bot check, downloads and checks wait until this time (epoch seconds).
-        self.youtube_paused_until = 0.0
-        self._blocks = 0
-        self._pause_lock = asyncio.Lock()
-
-    @property
-    def youtube_paused(self) -> bool:
-        return time.time() < self.youtube_paused_until
-
-    @property
-    def youtube_resumes_at(self) -> str | None:
-        """When a bot-check pause ends, or None when there isn't one."""
-        return from_timestamp(self.youtube_paused_until) if self.youtube_paused else None
+        youtube.when_paused(self._hold_queued)
 
     async def start(self) -> None:
         if self._tasks:
@@ -100,6 +87,8 @@ class JobRunner:
             "UPDATE jobs SET status = 'queued', started_at = NULL, attempts = max(attempts - 1, 0) "
             "WHERE status = 'running'"
         )
+        if until := self.youtube.resumes_at:
+            await self._hold_queued(until)
         self._stopping = False
         self._tasks = [
             *(asyncio.create_task(self._download_worker(i)) for i in range(MAX_DOWNLOAD_WORKERS)),
@@ -122,6 +111,10 @@ class JobRunner:
     def wake(self) -> None:
         self._wake.set()
 
+    def earliest_start(self, kind: str) -> str | None:
+        """When a job of this kind can run, if a pause on YouTube holds it back."""
+        return self.youtube.resumes_at if kind in YOUTUBE_KINDS else None
+
     async def enqueue(
         self,
         kind: str,
@@ -135,7 +128,6 @@ class JobRunner:
         """Queue a job, or return the existing active job for the same video/subscription."""
 
         async def insert(conn: aiosqlite.Connection) -> int:
-            paused = kind in YOUTUBE_KINDS and self.youtube_paused
             cursor = await conn.execute(
                 "INSERT OR IGNORE INTO jobs "
                 "(kind, video_id, subscription_id, options, priority, run_after) "
@@ -146,7 +138,7 @@ class JobRunner:
                     subscription_id,
                     dumps(options or {}),
                     priority,
-                    from_timestamp(self.youtube_paused_until) if paused else None,
+                    self.earliest_start(kind),
                 ),
             )
             if cursor.rowcount:
@@ -194,7 +186,7 @@ class JobRunner:
         return True
 
     async def queue_due_checks(self) -> int:
-        if self.youtube_paused:
+        if self.youtube.paused:
             return 0  # they fall due again once the pause ends
         due = await self.db.fetch_all(
             "SELECT id, check_interval_hours FROM subscriptions "
@@ -265,42 +257,27 @@ class JobRunner:
         while not self._stopping and (left := deadline - time.monotonic()) > 0:
             await self._idle(left)
 
-    async def _pause_youtube(self, job: dict[str, Any], error: Exception) -> None:
-        """YouTube wants a bot check: hold every download and check for a while, rather than
-        letting each queued job run into it. The job doesn't use up an attempt."""
-        async with self._pause_lock:
-            if not self.youtube_paused:
-                self._blocks += 1
-                seconds = BLOCK_PAUSES[min(self._blocks, len(BLOCK_PAUSES)) - 1]
-                self.youtube_paused_until = time.time() + seconds
-                logger.warning(
-                    "YouTube asked for a bot check; downloads and checks wait %s minutes: %s",
-                    seconds // 60,
-                    error,
-                )
-            until = from_timestamp(self.youtube_paused_until)
-            await self._requeue(job, until, str(error))
-            await self.db.execute(
-                "UPDATE jobs SET run_after = ? WHERE status = 'queued' "
-                "AND kind IN ('download', 'check') AND coalesce(run_after, '') < ?",
-                (until, until),
-            )
+    async def _hold_queued(self, until: str) -> None:
+        """Make queued downloads and checks wait out a bot check, rather than letting each run
+        into it."""
+        await self.db.execute(
+            "UPDATE jobs SET run_after = ? WHERE status = 'queued' "
+            "AND kind IN ('download', 'check') AND coalesce(run_after, '') < ?",
+            (until, until),
+        )
 
     async def resume_youtube(self) -> None:
         """End a bot-check pause early."""
-        async with self._pause_lock:  # never in the middle of recording one
-            if self.youtube_paused_until:
-                until = from_timestamp(self.youtube_paused_until)
-                self.youtube_paused_until = 0.0
-                await self.db.execute(
-                    "UPDATE jobs SET run_after = NULL WHERE status = 'queued' "
-                    "AND kind IN ('download', 'check') AND run_after <= ?",
-                    (until,),
-                )
+        if until := await self.youtube.resume():
+            await self.db.execute(
+                "UPDATE jobs SET run_after = NULL WHERE status = 'queued' "
+                "AND kind IN ('download', 'check') AND run_after <= ?",
+                (until,),
+            )
         self.wake()
 
     async def _claim(self, kinds: tuple[str, ...]) -> dict[str, Any] | None:
-        if self.youtube_paused:
+        if self.youtube.paused:
             kinds = tuple(kind for kind in kinds if kind not in YOUTUBE_KINDS)
             if not kinds:
                 return None
@@ -339,7 +316,11 @@ class JobRunner:
             retry_at = starts + 600 if starts > time.time() else time.time() + 3600
             await self._requeue(job, from_timestamp(retry_at), str(error))
         except Blocked as error:
-            await self._pause_youtube(job, error)
+            # It keeps its attempt, since a refusal is rarely the job's fault. It goes behind the
+            # others in case it is: one video YouTube won't serve mustn't hold up the queue.
+            await self._requeue(job, self.youtube.resumes_at, str(error), job["priority"] - 1)
+        except Paused:
+            await self._requeue(job, self.youtube.resumes_at, self.youtube.reason)
         except YouTubeError as error:
             await self._fail_or_retry(job, error, retryable=type(error) is YouTubeError)
         except Refused as error:
@@ -349,8 +330,6 @@ class JobRunner:
             logger.exception("Job %s failed", job["id"])
             await self._fail_or_retry(job, error, retryable=False)
         else:
-            if job["kind"] in YOUTUBE_KINDS:
-                self._blocks = 0
             await self._finish(
                 job["id"],
                 status="completed",
@@ -364,7 +343,11 @@ class JobRunner:
             self.progress.pop(job["id"], None)
 
     async def _requeue(
-        self, job: dict[str, Any], run_after: str | None, error: str | None = None
+        self,
+        job: dict[str, Any],
+        run_after: str | None,
+        error: str | None = None,
+        priority: int | None = None,
     ) -> None:
         await self._finish(
             job["id"],
@@ -373,6 +356,7 @@ class JobRunner:
             run_after=run_after,
             error=error,
             attempts=max(job["attempts"] - 1, 0),
+            priority=job["priority"] if priority is None else priority,
         )
 
     async def _fail_or_retry(self, job: dict[str, Any], error: Exception, retryable: bool) -> None:

@@ -6,7 +6,8 @@ from pathlib import Path
 
 from app import layout
 from app.db import Database
-from app.youtube import Source, YouTube
+from app.gate import YouTubeGate
+from app.youtube import Source
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ def write_image(path: Path, data: bytes) -> None:
     temporary.replace(path)
 
 
-async def first_image(youtube: YouTube, urls: list[str]) -> bytes | None:
+async def first_image(youtube: YouTubeGate, urls: list[str]) -> bytes | None:
     for url in urls:
         try:
             data = await youtube.fetch_image(url)
@@ -37,7 +38,9 @@ async def first_image(youtube: YouTube, urls: list[str]) -> bytes | None:
     return None
 
 
-async def save_channel_art(db: Database, youtube: YouTube, channel_id: int, source: Source) -> None:
+async def save_channel_art(
+    db: Database, youtube: YouTubeGate, channel_id: int, source: Source
+) -> None:
     """Save a channel's avatar and banner in its folder unless they are already there.
 
     A failure is logged and nothing more: art is never worth failing a check for.

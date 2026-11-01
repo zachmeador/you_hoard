@@ -82,6 +82,8 @@ class FakeVideo:
     automatic_captions: dict[str, str] = field(default_factory=dict)
     # Languages whose caption download fails, as YouTube's rate limit does.
     failing_subtitles: set[str] = field(default_factory=set)
+    # What YouTube says when it refuses a subtitle or chat that matters, as the adapter reports it.
+    refused_extras: str | None = None
     # Audio tracks as language -> language preference; the original ranks highest.
     audio: dict[str, int] = field(default_factory=lambda: {"en": -1})
     comments: list[dict[str, Any]] | None = None
@@ -311,6 +313,8 @@ class FakeYouTube:
                 for start, end, category in video.sponsor_segments
             ]
         info["_youhoard"] = {"subtitles": saved}
+        if video.refused_extras:
+            info["_youhoard"]["refused"] = video.refused_extras
         return json.loads(json.dumps(info))
 
     def versions(self) -> dict[str, str | None]:

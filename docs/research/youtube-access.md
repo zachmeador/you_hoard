@@ -80,6 +80,16 @@ For comparison, yt-dlp's `-t sleep` preset waits 0.75 s between requests, 5 s be
 
 Each defect was confirmed in the code. The classifier results came from running `classify` on real yt-dlp messages.
 
+Fixed since this snapshot:
+
+- Defects 1–4, 6 and 8 are fixed.
+- Defect 5 is fixed for checks, which stop at their next tab. A download already under way still finishes.
+- Defect 7 is fixed for the backoff: a refused subtitle or chat starts a pause and doesn't reset it. Translated captions are the exception. The lost track itself still needs the fill-in job on the roadmap.
+- Defect 9 is fixed as far as it can be offline: System says whether the file can be read and holds a signed-in session. Only using it shows whether YouTube accepts it.
+- Defect 10 is fixed for the headline: the Queue page can pause all YouTube work, and switching a subscription off pauses the downloads its policy queued. A policy of `none` still runs checks, by design, a check already queued still runs, and concurrency still can't go below 1.
+- Every YouTube call now goes through one gate (`app/gate.py`), which keeps the pause in the database.
+- Only a download or lookup that begins after the latest refusal resets the backoff.
+
 1. **An age-gated video pauses everything.** `BLOCKED` contains "sign in to confirm you", which also matches "Sign in to confirm your age", and it's checked before `INACCESSIBLE`. `classify` returns `Blocked`, so one age-restricted video holds the whole queue for an hour. The real bot message uses a curly apostrophe ("you’re"), so a narrower pattern has to allow for both forms.
 2. **Listings reset the backoff.** Any successful download *or check* sets `_blocks = 0` in `JobRunner._run`. Listings can keep working while every video request is refused, so with several subscriptions the pause can stay at 1 hour while every download fails.
 3. **CAPTCHA refusals aren't recognised.** No `BLOCKED` pattern matches yt-dlp's captcha wording, so the rest of the message decides. Usually that means a generic per-job retry. If YouTube's reason also says "Video unavailable", the job is classified `Unavailable`: the video is marked gone from YouTube and the download fails without a retry.

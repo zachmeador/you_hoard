@@ -16,8 +16,9 @@ from app.api.deps import (
     not_found,
 )
 from app.artwork import save_channel_art
-from app.checks import apply_policy, queue_entry_download
+from app.checks import apply_policy, pause_policy_downloads, queue_entry_download
 from app.db import Database, dumps, fetch_one, later, loads, now
+from app.gate import YouTubeGate
 from app.jobs import JobRunner
 from app.library import upsert_channel
 from app.settings import Settings
@@ -25,7 +26,6 @@ from app.youtube import (
     QUALITIES,
     Inaccessible,
     Unavailable,
-    YouTube,
     YouTubeError,
     parse_source_url,
     source_url,
@@ -197,7 +197,7 @@ async def subscription_response(db: Database, subscription_id: int) -> dict[str,
     return (await subscriptions_out(db, [await load_subscription(db, subscription_id)]))[0]
 
 
-async def resolve(youtube: YouTube, url: str):
+async def resolve(youtube: YouTubeGate, url: str):
     try:
         kind, resolvable = parse_source_url(url)
     except ValueError as error:
@@ -218,7 +218,7 @@ async def list_subscriptions(db: Database = Depends(get_db)):
 
 @router.post("/resolve")
 async def resolve_source(
-    body: SourceUrl, db: Database = Depends(get_db), youtube: YouTube = Depends(get_youtube)
+    body: SourceUrl, db: Database = Depends(get_db), youtube: YouTubeGate = Depends(get_youtube)
 ):
     source = await resolve(youtube, body.url)
     existing = await db.fetch_value(
@@ -244,7 +244,7 @@ async def create_subscription(
     db: Database = Depends(get_db),
     runner: JobRunner = Depends(get_runner),
     settings: Settings = Depends(get_settings),
-    youtube: YouTube = Depends(get_youtube),
+    youtube: YouTubeGate = Depends(get_youtube),
 ):
     source = await resolve(youtube, body.url)
     interval = body.check_interval_hours or await settings.get("check_interval_hours")
@@ -341,9 +341,13 @@ async def update_subscription(
             f"UPDATE subscriptions SET {assignments} WHERE id = ?",
             (*values.values(), subscription_id),
         )
+        enabled = fields.get("enabled", current["enabled"])
+        policy = fields.get("download_policy", current["download_policy"])
+        was_downloading = current["enabled"] and current["download_policy"] != "none"
+        if was_downloading and (not enabled or policy == "none"):
+            await pause_policy_downloads(conn, subscription_id)
         if selection_changed:
             await apply_policy(runner, conn, subscription_id)
-            enabled = fields.get("enabled", current["enabled"])
             types_added = "content_types" in fields and set(fields["content_types"]) - set(
                 loads(current["content_types"])
             )

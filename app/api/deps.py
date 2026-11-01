@@ -5,10 +5,11 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from app.db import Database, loads
+from app.gate import YouTubeGate
 from app.jobs import JobRunner
 from app.library import VIDEO_SELECT, quality_label
 from app.settings import Settings
-from app.youtube import YouTube, video_url
+from app.youtube import video_url
 
 
 def get_db(request: Request) -> Database:
@@ -23,7 +24,7 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def get_youtube(request: Request) -> YouTube:
+def get_youtube(request: Request) -> YouTubeGate:
     return request.app.state.youtube
 
 

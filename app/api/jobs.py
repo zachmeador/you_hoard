@@ -6,8 +6,9 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_db, get_runner, not_found
+from app.api.deps import get_db, get_runner, get_youtube, not_found
 from app.db import Database, dumps, fetch_one, loads, now
+from app.gate import YouTubeGate
 from app.jobs import JobRunner
 
 router = APIRouter()
@@ -30,6 +31,7 @@ ORDER BY CASE j.status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' 
          coalesce(j.finished_at, j.created_at) DESC, j.id DESC
 """
 WAITING_ORDER = "ORDER BY j.run_after, j.id"
+MAX_PAUSE_HOURS = 24 * 30
 
 
 def job_out(row: dict[str, Any], runner: JobRunner) -> dict[str, Any]:
@@ -94,6 +96,7 @@ async def list_jobs(
     offset: int = Query(0, ge=0),
     db: Database = Depends(get_db),
     runner: JobRunner = Depends(get_runner),
+    youtube: YouTubeGate = Depends(get_youtube),
 ):
     moment = now()
     where, params = job_where(status, kind, moment)
@@ -119,7 +122,7 @@ async def list_jobs(
         "items": [job_out(row, runner) for row in rows],
         "total": total,
         "counts": counts,
-        "youtube_paused_until": runner.youtube_resumes_at,
+        **youtube.status,
     }
 
 
@@ -135,9 +138,20 @@ async def list_job_ids(
     return {"ids": [row["id"] for row in rows]}
 
 
+class YouTubePause(BaseModel):
+    hours: float = Field(gt=0, le=MAX_PAUSE_HOURS)
+
+
+@router.post("/pause-youtube")
+async def pause_youtube(body: YouTubePause, youtube: YouTubeGate = Depends(get_youtube)):
+    """Hold all YouTube work for a while, e.g. to give the connection a rest."""
+    await youtube.hold(body.hours * 3600)
+    return {"ok": True}
+
+
 @router.post("/resume-youtube")
 async def resume_youtube(runner: JobRunner = Depends(get_runner)):
-    """End a bot-check pause early, e.g. after loading cookies."""
+    """End a pause early, e.g. after loading cookies."""
     await runner.resume_youtube()
     return {"ok": True}
 
@@ -160,12 +174,14 @@ async def transition(
                 )
                 if video["media_path"]:
                     raise HTTPException(status_code=409, detail="This video is already archived")
-            extra = (
-                ", attempts = 0, error = NULL, run_after = NULL, started_at = NULL, finished_at = NULL"
-                if job["status"] in ("failed", "cancelled")
-                else ""
-            )
-            await conn.execute(f"UPDATE jobs SET status = ?{extra} WHERE id = ?", (status, job_id))
+            if job["status"] in ("failed", "cancelled"):
+                await conn.execute(
+                    "UPDATE jobs SET status = ?, attempts = 0, error = NULL, run_after = ?, "
+                    "started_at = NULL, finished_at = NULL WHERE id = ?",
+                    (status, runner.earliest_start(job["kind"]), job_id),
+                )
+            else:
+                await conn.execute("UPDATE jobs SET status = ? WHERE id = ?", (status, job_id))
     except sqlite3.IntegrityError as error:
         raise HTTPException(
             status_code=409, detail="Another job for this is already queued"

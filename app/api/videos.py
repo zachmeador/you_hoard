@@ -22,6 +22,7 @@ from app.api.deps import (
     video_out,
 )
 from app.db import Database, from_timestamp, loads, now
+from app.gate import YouTubeGate
 from app.jobs import JobRunner
 from app.languages import language_name
 from app.library import VIDEO_SELECT, archive_facts, published_at, record_archived, save_video_info
@@ -32,7 +33,6 @@ from app.youtube import (
     Inaccessible,
     NotReady,
     Unavailable,
-    YouTube,
     YouTubeError,
     parse_video_url,
 )
@@ -90,7 +90,7 @@ def resolved_cache(request: Request) -> dict[str, tuple[float, dict[str, Any] | 
 
 
 async def fetch_info(
-    youtube: YouTube, youtube_id: str, cache: dict[str, tuple[float, dict[str, Any] | None]]
+    youtube: YouTubeGate, youtube_id: str, cache: dict[str, tuple[float, dict[str, Any] | None]]
 ) -> dict[str, Any] | None:
     """YouTube's metadata for a video, or None for one that has not aired yet."""
     cached = cache.pop(youtube_id, None)
@@ -267,7 +267,7 @@ async def resolve_video(
     body: VideoUrl,
     request: Request,
     db: Database = Depends(get_db),
-    youtube: YouTube = Depends(get_youtube),
+    youtube: YouTubeGate = Depends(get_youtube),
 ):
     """Preview a video URL before adding it: what it is, and whether the library has it."""
     youtube_id = body.url
@@ -306,7 +306,7 @@ async def add_video(
     request: Request,
     db: Database = Depends(get_db),
     runner: JobRunner = Depends(get_runner),
-    youtube: YouTube = Depends(get_youtube),
+    youtube: YouTubeGate = Depends(get_youtube),
 ):
     youtube_id = body.url
     existing = await db.fetch_one(f"{VIDEO_SELECT} WHERE v.youtube_id = ?", (youtube_id,))

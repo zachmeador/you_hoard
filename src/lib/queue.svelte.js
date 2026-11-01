@@ -16,8 +16,10 @@ class QueueState {
   counts = $state(emptyCounts())
   /** @type {Job[]} */
   running = $state([])
-  /** When downloads and checks resume after a YouTube bot check. @type {string | null} */
+  /** When YouTube work resumes, while it's paused. @type {string | null} */
   youtubePausedUntil = $state(null)
+  /** What YouTube said, while a refusal is why it's paused. @type {string | null} */
+  youtubePauseReason = $state(null)
 
   /** Running downloads by video id, for their progress. */
   byVideo = $derived.by(() => {
@@ -41,6 +43,7 @@ class QueueState {
     const res = await api.jobs.list({ status: 'running', limit: 50 })
     this.counts = { ...emptyCounts(), ...res.counts }
     this.youtubePausedUntil = res.youtube_paused_until ?? null
+    this.youtubePauseReason = res.youtube_pause_reason ?? null
     this.running = res.items
   }
 }

@@ -12,6 +12,7 @@ from app import tubearchivist
 from app.auth import hash_password
 from app.config import apply_umask, config
 from app.db import Database, dumps
+from app.gate import YouTubeGate
 from app.jobs import JobRunner, Refused
 from app.scanner import run_scan
 from app.settings import Settings
@@ -19,7 +20,7 @@ from app.youtube import YouTube
 
 
 async def rescan(args: argparse.Namespace, db: Database) -> int:
-    runner = JobRunner(db, YouTube(), Settings(db))
+    runner = JobRunner(db, YouTubeGate(YouTube(), db), Settings(db))
     job = {"id": 0, "options": dumps({"force": args.force})}
     try:
         result = await run_scan(runner, job, threading.Event())

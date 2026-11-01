@@ -33,12 +33,18 @@ export function shortReason(text) {
 }
 
 /**
+ * What YouTube said, without yt-dlp's prefix and advice.
+ * @param {string} reason
+ */
+export const refusalWords = (reason) => reason.replace(/^\[\w+\] [\w-]+: /, '').split(/(?<=\.) /)[0]
+
+/**
  * Why a waiting job has not run yet; empty for premieres, whose time says it all.
  * @param {JobState} job
  */
 export function waitNote(job) {
   if (isRetry(job)) return `Attempt ${job.attempts + 1} of ${MAX_ATTEMPTS}, after ${shortReason(job.error ?? '')}`
-  return isPremiere(job) ? '' : (job.error ?? '')
+  return isPremiere(job) ? '' : refusalWords(job.error ?? '')
 }
 
 /**

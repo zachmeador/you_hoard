@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app import jobs
 from app.config import config
+from app.gate import YouTubeGate
 from main import create_app
 from tests.fake_youtube import FakeYouTube
 
@@ -24,6 +25,10 @@ class Archive:
     @property
     def app(self):
         return self.client.app
+
+    @property
+    def gate(self) -> YouTubeGate:
+        return self.app.state.youtube
 
     def call(self, function: Callable, *args: Any) -> Any:
         """Run a coroutine function on the app's event loop."""
