@@ -48,19 +48,22 @@ Failures that aren't refusals:
 | [MeTube](https://github.com/alexta69/metube/wiki/Using-browser-cookies) | Upload, replace and delete cookies in the UI; bundles a bgutil server on loopback; images follow stable yt-dlp, with an optional nightly |
 | [Youtarr](https://github.com/DialmasterOrg/Youtarr/blob/main/docs/TROUBLESHOOTING.md) | Cookie upload and test; log export redacts secrets |
 
-## YouHoard at `16ac112`
+## How YouHoard paces itself
 
 ### Pacing
 
 | What | Value | Where |
 | --- | --- | --- |
 | Download workers | 2 by default, 1–8 | `app/settings.py`, `app/api/system.py` |
-| Rest after each download | 10–30 s per worker | `DOWNLOAD_REST` in `app/jobs.py` |
+| Rest between downloads | 2–4 minutes after one starts or finishes, across all workers | `REST` in `app/pace.py`, enforced by `app/gate.py` |
+| Rest between checks | 20–40 s, the same way | `REST` |
 | Checks and scans | One separate worker | `app/jobs.py` |
 | Gap between adapter calls | At least 2 s (`YTDLP_REQUEST_INTERVAL`) | `YouTube._run` |
-| yt-dlp request sleep | 0.75 s; 1 s for channel listings | `REQUEST_SLEEP`, `YouTube.list_entries` |
+| yt-dlp request sleep | 0.75 s; 1 s for channel listings | `REQUEST_SLEEP`, `LISTING_SLEEP` |
 | Subtitle sleep | 5 s per file | `SUBTITLE_SLEEP` |
 | Comments, when enabled | Up to 1,000 per video, at most 100 of them replies | `YouTube.download` |
+
+`app/pace.py` holds these numbers, apart from the worker count (a setting) and the 2-second gap (config). The rest caps a backlog at about 20 downloads an hour.
 
 The 2-second gap spaces out when operations start, not HTTP requests. The lock is released before yt-dlp runs and one operation makes many requests, so parallel downloads, a check and a URL lookup can overlap.
 
@@ -70,25 +73,27 @@ For comparison, yt-dlp's `-t sleep` preset waits 0.75 s between requests, 5 s be
 
 | Error | What happens |
 | --- | --- |
-| `Blocked`: "sign in to confirm you", "try again later", HTTP 429, "too many requests" or "rate-limit" | All queued downloads and checks wait 1 hour, then 2, 4, 8 and 12 hours while refusals continue (`BLOCK_PAUSES`). The job keeps its attempt |
-| Generic `YouTubeError`, including HTTP 403 | That job alone retries after 15 minutes, 1 hour and 4 hours (`RETRY_DELAYS`), 4 attempts in all |
+| `Blocked`: "sign in to confirm you", "try again later", HTTP 429, "too many requests" or "rate-limit" | All YouTube work waits 1 hour, then 2, 4, 8 and 12 hours while refusals continue (`BLOCK_PAUSES`). The job gets its attempt back and goes behind the jobs YouTube hasn't refused |
+| A refused subtitle or live chat | All YouTube work waits one hour (`EXTRAS_PAUSE`), off the ladder. The video is kept and counts as a success |
+| Generic `YouTubeError`, including HTTP 403 | That job retries after 15 minutes, 1 hour and 4 hours (`RETRY_DELAYS`), 4 attempts in all. Five download failures in a row (`FAILURE_STREAK`) pause all YouTube work for an hour (`FAILURE_PAUSE`), off the ladder |
 | `Inaccessible` or `Unavailable` | That job fails at once. `Unavailable` also marks the video as gone from YouTube |
-| Generic errors in metadata calls | The adapter retries after 5 and 15 seconds |
+| Generic errors in metadata calls | The adapter retries after 5 and 15 seconds, and each attempt stops if YouTube work has been paused meanwhile |
 | Downloads | No adapter retry; yt-dlp retries 5 times for HTTP, 10 for fragments and 3 for extraction |
 
-### Defects
+## Defects at `16ac112`
 
 Each defect was confirmed in the code. The classifier results came from running `classify` on real yt-dlp messages.
 
 Fixed since this snapshot:
 
 - Defects 1–4, 6 and 8 are fixed.
-- Defect 5 is fixed for checks, which stop at their next tab. A download already under way still finishes.
-- Defect 7 is fixed for the backoff: a refused subtitle or chat starts a pause and doesn't reset it. Translated captions are the exception. The lost track itself still needs the fill-in job on the roadmap.
+- Defect 5 is fixed: a listing stops at its next entry, and a call waiting its turn doesn't start. A transfer already under way still finishes.
+- Defect 7 is fixed for the backoff: a refused subtitle or chat pauses for a fixed hour and doesn't reset the ladder. Translated captions are the exception. The lost track itself still needs the fill-in job on the roadmap.
 - Defect 9 is fixed as far as it can be offline: System says whether the file can be read and holds a signed-in session. Only using it shows whether YouTube accepts it.
-- Defect 10 is fixed for the headline: the Queue page can pause all YouTube work, and switching a subscription off pauses the downloads its policy queued. A policy of `none` still runs checks, by design, a check already queued still runs, and concurrency still can't go below 1.
+- Defect 10 is fixed for the headline: the Queue page can pause all YouTube work, and switching a subscription off pauses the downloads its policy queued. Switching it back on resumes them. A policy of `none` still runs checks, by design. A check already queued still runs but queues nothing, and concurrency still can't go below 1.
 - Every YouTube call now goes through one gate (`app/gate.py`), which keeps the pause in the database.
-- Only a download or lookup that begins after the latest refusal resets the backoff.
+- Only a completed download that began after the latest refusal resets the backoff.
+- Generic failures no longer run through a backlog unchecked, and checks held by a pause no longer burst or stay clumped.
 
 1. **An age-gated video pauses everything.** `BLOCKED` contains "sign in to confirm you", which also matches "Sign in to confirm your age", and it's checked before `INACCESSIBLE`. `classify` returns `Blocked`, so one age-restricted video holds the whole queue for an hour. The real bot message uses a curly apostrophe ("you’re"), so a narrower pattern has to allow for both forms.
 2. **Listings reset the backoff.** Any successful download *or check* sets `_blocks = 0` in `JobRunner._run`. Listings can keep working while every video request is refused, so with several subscriptions the pause can stay at 1 hour while every download fails.

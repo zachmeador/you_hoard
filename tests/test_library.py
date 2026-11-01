@@ -156,12 +156,9 @@ def test_filters_sorting_and_watched(archive):
 def test_upcoming_videos_wait_instead_of_failing(archive):
     archive.youtube.add(VIDEO, live_status="is_upcoming")
     video = add(archive)
-    job = archive.wait(
-        lambda: (
-            (job := archive.job(video["job_id"]))["run_after"] and job["status"] == "queued" and job
-        )
-    )
-    assert job["attempts"] == 0
+    job = archive.wait(lambda: (job := archive.job(video["job_id"]))["state"] == "waiting" and job)
+    assert job["status"] == "queued" and job["attempts"] == 0
+    assert (job["reason"], job["waiting_on"]) == ("premiere", "premiere")
     assert "Not available" in job["error"]
     assert archive.client.get(f"/api/videos/{video['id']}").json()["status"] == "queued"
 

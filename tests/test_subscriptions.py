@@ -1,7 +1,16 @@
 """Subscriptions keep an inventory; download policies decide what gets archived."""
 
+import asyncio
+import threading
+from datetime import timedelta
+from types import SimpleNamespace
+
 import pytest
 
+from app import jobs
+from app.checks import apply_policy
+from app.db import iso, later, parse_time, utcnow
+from app.youtube import YouTubeError
 from tests.fake_youtube import CHANNEL_ID, OTHER_CHANNEL_ID, PLAYLIST_ID
 
 CHANNEL_URL = "https://www.youtube.com/@fixture"
@@ -157,11 +166,19 @@ def test_inventory_entries_carry_their_pending_download(archive):
     archive.sql("UPDATE jobs SET run_after = ? WHERE id = ?", (later, jobs[waiting]))
 
     entries = {entry["youtube_id"]: entry for entry in archive.client.get(url).json()["items"]}
-    assert entries[running]["job"]["status"] == "running"
-    held = {"status": "paused", "run_after": None, "attempts": 0, "error": None}
+    assert entries[running]["job"]["state"] == "running"
+    held = {
+        "state": "paused",
+        "reason": "asked",
+        "waiting_on": None,
+        "waits_until": None,
+        "attempts": 0,
+        "max_attempts": 4,
+        "error": None,
+    }
     assert entries[paused]["status"] == "queued" and entries[paused]["job"] == held
-    assert entries[waiting]["job"]["status"] == "queued"
-    assert entries[waiting]["job"]["run_after"] == later
+    assert entries[waiting]["job"]["state"] == "waiting"
+    assert entries[waiting]["job"]["waits_until"] == later
 
 
 def test_adding_a_tab_lists_it_and_removing_a_subscription_keeps_videos(archive):
@@ -329,3 +346,194 @@ def test_a_later_edit_leaves_alone_a_job_resumed_by_hand(archive):
     assert archive.client.patch(path, json={"check_interval_hours": 12}).status_code == 200
     assert archive.job(job["id"])["status"] == "queued"
     archive.call(runner.start)
+
+
+SWITCHES = [
+    ({"enabled": False}, {"enabled": True}),
+    ({"download_policy": "none"}, {"download_policy": "recent"}),
+]
+SWITCH_IDS = ["disabled", "policy"]
+
+
+def queued_by_policy_and_by_hand(archive):
+    """A subscription whose policy queued two downloads and whose owner paused a third by hand and
+    asked for a fourth. Returns its path and the jobs: paused by hand, by policy, asked for."""
+    videos = ids("vid", 4)
+    seed_tab(archive, "video", videos)
+    sub = subscribe(archive)
+    path = f"/api/subscriptions/{sub['id']}"
+    archive.call(archive.app.state.runner.stop)
+    patched = archive.client.patch(path, json={"download_policy": "recent", "recent_count": 3})
+    assert patched.status_code == 200
+    asked = archive.client.post(f"{path}/entries/{videos[3]}/download").json()["job_id"]
+    downloads = sorted(job["id"] for job in archive.jobs(kind="download") if job["id"] != asked)
+    by_hand, *by_policy = downloads
+    assert len(by_policy) == 2
+    assert archive.client.post(f"/api/jobs/{by_hand}/pause").status_code == 200
+    return path, by_hand, by_policy, asked
+
+
+def statuses(archive, *job_ids):
+    return [archive.job(job_id)["status"] for job_id in job_ids]
+
+
+@pytest.mark.parametrize(("off", "on"), SWITCHES, ids=SWITCH_IDS)
+def test_switching_a_subscription_back_on_resumes_exactly_what_switching_it_off_paused(
+    archive, off, on
+):
+    path, by_hand, by_policy, asked = queued_by_policy_and_by_hand(archive)
+    assert archive.client.patch(path, json=off).status_code == 200
+    assert statuses(archive, by_hand, *by_policy, asked) == ["paused"] * 3 + ["queued"]
+
+    assert archive.client.patch(path, json=on).status_code == 200
+    # Only the downloads switching off paused come back: the owner's hold and ask are untouched.
+    assert statuses(archive, by_hand, *by_policy, asked) == ["paused", "queued", "queued", "queued"]
+
+
+@pytest.mark.parametrize(("off", "on"), SWITCHES, ids=SWITCH_IDS)
+def test_switching_a_subscription_off_says_why_it_paused_what_it_paused(archive, off, on):
+    path, by_hand, by_policy, asked = queued_by_policy_and_by_hand(archive)
+    assert archive.client.patch(path, json=off).status_code == 200
+    reasons = [archive.job(job_id)["reason"] for job_id in (by_hand, *by_policy, asked)]
+    assert reasons == ["asked", "subscription_off", "subscription_off", None]
+
+    assert archive.client.patch(path, json=on).status_code == 200
+    reasons = [archive.job(job_id)["reason"] for job_id in (by_hand, *by_policy, asked)]
+    assert reasons == ["asked", None, None, None]
+
+
+def test_one_patch_that_disables_a_subscription_and_widens_its_selection_queues_nothing(archive):
+    seed_tab(archive, "video", ids("vid", 3))
+    sub = subscribe(archive)
+    path = f"/api/subscriptions/{sub['id']}"
+    changed = archive.client.patch(path, json={"enabled": False, "download_policy": "all"})
+    assert changed.status_code == 200
+    archive.wait_idle()
+    assert archive.jobs(kind="download") == [] and library(archive) == {}
+    entries = archive.client.get(f"{path}/entries").json()["items"]
+    assert {entry["skip_reason"] for entry in entries} == {"subscription_off"}
+
+
+def test_a_check_that_finishes_after_the_subscription_was_disabled_queues_nothing(
+    archive, monkeypatch
+):
+    seed_tab(archive, "video", [])
+    sub = subscribe(archive, download_policy="all")
+    seed_tab(archive, "video", ids("new", 2))
+    release = threading.Event()
+    listed = archive.youtube.list_entries
+
+    async def list_when_released(*args, **kwargs):
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        return await listed(*args, **kwargs)
+
+    monkeypatch.setattr(archive.youtube, "list_entries", list_when_released)
+    queued = archive.client.post(f"/api/subscriptions/{sub['id']}/check").json()
+    archive.wait_job(queued["job_id"], "running")
+    assert (
+        archive.client.patch(f"/api/subscriptions/{sub['id']}", json={"enabled": False}).status_code
+        == 200
+    )
+    release.set()
+
+    finished = archive.wait_job(queued["job_id"])
+    assert finished["result"]["new_entries"] == 2 and finished["result"]["queued"] == 0
+    assert archive.jobs(kind="download") == [] and library(archive) == {}
+
+
+def test_apply_policy_queues_nothing_for_a_disabled_subscription_whoever_asks(archive):
+    seed_tab(archive, "video", ids("vid", 3))
+    sub = subscribe(archive, download_policy="none")
+    archive.sql("UPDATE subscriptions SET download_policy = 'all', enabled = 0")
+    runner = archive.app.state.runner
+
+    async def apply() -> int:
+        async with archive.app.state.db.transaction() as conn:
+            return await apply_policy(runner, conn, sub["id"], actor="app")
+
+    assert archive.call(apply) == 0
+    archive.sql("UPDATE subscriptions SET enabled = 1")
+    assert archive.call(apply) == 3
+
+
+def test_a_long_pause_leaves_each_checks_next_time_on_its_own_rhythm(archive, monkeypatch):
+    # No jitter, in the scheduler only: the gate draws its rests from the same module.
+    monkeypatch.setattr(jobs, "random", SimpleNamespace(uniform=lambda low, high: 1.0))
+    seed_tab(archive, "video", ids("vid", 1))
+    first = subscribe(archive, check_interval_hours=6)
+    playlist = ids("pla", 1)
+    archive.youtube.add(playlist[0])
+    archive.youtube.playlist = playlist
+    second = subscribe(archive, PLAYLIST_URL, check_interval_hours=6)
+    # Two checks fell due long ago, an hour apart, as after a long pause.
+    stale = {first["id"]: later(hours=-50), second["id"]: later(hours=-49)}
+    for subscription_id, moment in stale.items():
+        archive.sql(
+            "UPDATE subscriptions SET next_check_at = ? WHERE id = ?", (moment, subscription_id)
+        )
+
+    assert archive.call(archive.app.state.runner.queue_due_checks) == 2
+    archive.wait_idle()
+    for subscription_id, previous in stale.items():
+        row = archive.sql(
+            "SELECT next_check_at FROM subscriptions WHERE id = ?", (subscription_id,)
+        )
+        advanced = parse_time(row[0]["next_check_at"]) - parse_time(previous)
+        # The nearest of its own six-hour steps after now, not six hours from now.
+        assert advanced == timedelta(hours=54)
+        assert utcnow() < parse_time(row[0]["next_check_at"]) <= utcnow() + timedelta(hours=6)
+
+
+def test_jitter_keeps_a_checks_next_time_within_a_tenth_of_its_interval():
+    previous = iso(utcnow() - timedelta(hours=1))
+    slack = timedelta(seconds=5)
+    for _ in range(50):
+        moment = parse_time(jobs.next_check(previous, 6))
+        assert utcnow() + timedelta(hours=4.4) - slack <= moment
+        assert moment <= utcnow() + timedelta(hours=5.6) + slack
+
+
+def test_switching_off_and_on_a_download_waiting_out_a_retry_brings_back_the_retry(archive):
+    video = ids("vid", 1)[0]
+    seed_tab(archive, "video", [video])
+    archive.youtube.download_failures[video] = YouTubeError("HTTP Error 503: Service Unavailable")
+    sub = subscribe(archive, download_policy="none")
+    path = f"/api/subscriptions/{sub['id']}"
+    assert archive.client.patch(path, json={"download_policy": "all"}).status_code == 200
+    (job,) = [job["id"] for job in archive.wait(lambda: archive.jobs(kind="download"))]
+    archive.wait(lambda: archive.job(job)["state"] == "waiting")
+
+    assert archive.client.patch(path, json={"enabled": False}).status_code == 200
+    assert (archive.job(job)["status"], archive.job(job)["reason"]) == (
+        "paused",
+        "subscription_off",
+    )
+    assert archive.client.patch(path, json={"enabled": True}).status_code == 200
+    resumed = archive.job(job)
+    assert (resumed["state"], resumed["reason"], resumed["waiting_on"]) == (
+        "waiting",
+        "retry",
+        "retry",
+    )
+
+
+def test_asking_for_a_queued_download_by_hand_takes_it_out_of_the_policys_hands(archive):
+    videos = ids("vid", 3)
+    seed_tab(archive, "video", videos)
+    sub = subscribe(archive, download_policy="none")
+    archive.call(archive.app.state.runner.stop)
+    path = f"/api/subscriptions/{sub['id']}"
+    assert archive.client.patch(path, json={"download_policy": "all"}).status_code == 200
+    by_policy = {job["video"]["youtube_id"]: job["id"] for job in archive.jobs(kind="download")}
+    assert {archive.job(job_id)["origin"] for job_id in by_policy.values()} == {"policy"}
+
+    asked = archive.client.post(f"{path}/entries/{videos[0]}/download").json()["job_id"]
+    assert asked == by_policy[videos[0]]  # the same job: one active download per video
+    assert archive.job(asked)["origin"] == "user"
+
+    assert archive.client.patch(path, json={"enabled": False}).status_code == 200
+    assert archive.job(asked)["status"] == "queued"
+    assert [archive.job(by_policy[video])["status"] for video in videos[1:]] == ["paused"] * 2
+    assert archive.client.patch(path, json={"enabled": True}).status_code == 200
+    assert [archive.job(job_id)["status"] for job_id in by_policy.values()] == ["queued"] * 3

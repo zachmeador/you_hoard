@@ -9,6 +9,7 @@ A single-user YouTube archive: follow channels and playlists, save individual vi
 3. **Durable facts and transient work are separate.** A video row records what is true (archived file, removed by the user, gone from YouTube). Queued, downloading and failed come from the jobs table.
 4. **Subscriptions keep an inventory.** A check lists what a channel or playlist contains; a download policy decides what to archive. Nothing is downloaded by surprise.
 5. **yt-dlp is the only YouTube boundary** (`app/youtube.py`). Tests replace it with a fake.
+6. **The app can say why.** Each job records why it's where it is, and each decision goes in the `events` table, so a question about what the app did has an answer in the app rather than in its logs.
 
 ## Process
 
@@ -50,19 +51,23 @@ Run one process. On shutdown, running downloads are aborted at the next progress
 
 ## Data model
 
-Migrations live in `app/migrations/NNN_name.sql` and are tracked with `PRAGMA user_version`. Timestamps are UTC ISO 8601 strings (`2026-10-24T18:00:00Z`).
+Migrations live in `app/migrations/NNN_name.sql` and are tracked with `PRAGMA user_version`. Rules derived from the tables live as views in `app/views.sql`, rebuilt at every start, so changing a rule needs no migration. Timestamps are UTC ISO 8601 strings (`2026-10-24T18:00:00Z`).
 
 | Table | Purpose |
 | --- | --- |
 | `channels` | YouTube uploaders (`youtube_id` = `UC…`), with verified flag and avatar/banner paths. |
-| `videos` | One row per video the library knows. `media_path` (relative to `MEDIA_DIR`) is set when archived. `deleted_at` marks local files removed by the user: never downloaded automatically again. `unavailable_at` records that YouTube reported the video gone. `watched_at`. `channel_id` may be null until metadata is known. Also `published_at` (with time when known), availability, age limit, comment count, and the archived file's fps, codecs, dynamic range, audio languages and subtitle tracks. |
+| `videos` | One row per video the library knows. `media_path` (relative to `MEDIA_DIR`) is set when archived. `deleted_at` marks local files removed by the user: never downloaded automatically again. `unavailable_at` records that YouTube reported the video gone. `lost_at` records that a rescan couldn't find its file. `watched_at`. `channel_id` may be null until metadata is known. Also `published_at` (with time when known), availability, age limit, comment count, and the archived file's fps, codecs, dynamic range, audio languages and subtitle tracks. |
 | `subscriptions` | A followed channel or playlist with its `download_policy`, content types (channel tabs), download-option overrides (null means the library default) and `next_check_at`. |
 | `source_entries` | Inventory: every video a subscription's source has listed, with position, `baseline` flag, `removed_at`, view count and uploader. Joined to `videos` by YouTube ID. |
-| `jobs` | `download` and `check` (and `scan`) work. Partial unique indexes allow one active job per video or subscription. `options` is input, `result` output. `run_after` defers premieres and retry backoff. |
+| `jobs` | `download`, `check` and `scan` work. Only `app/jobs.py` writes this table, and every status change goes through `JobRunner._move`, checked against `MOVES`. Partial unique indexes allow one active job per video or subscription. `origin` says who asked for it (`user`, `policy` or `schedule`), `reason` why it's in its current status, and `refusals` how often YouTube has refused it. `run_after` is its own retry or premiere wait and nothing else. `via_subscription_id` is the subscription a download came through. `options` is input, `result` output. Ids are never reused, because `events` outlives the rows. |
+| `events` | The append-only record of what happened: job moves, pauses on YouTube, subscriptions switched off and on, starts and stops. Each row says who did it (`owner`, `app` or `cli`). Only `app/events.py` writes it, and it logs the same line. Ids are plain integers rather than foreign keys, so the record outlives what it describes. |
+| `youtube_pause` | One row: when the pause ends, what caused it, what YouTube said, and the run of refusals. Only `app/gate.py` writes it. |
 | `settings` | Runtime settings as JSON values: library download defaults (quality, subtitle languages, auto captions, comments, audio languages, live chat, SponsorBlock), concurrency, default check interval, days removed files stay in the trash. |
 | `users`, `sessions` | One account; sessions store a SHA-256 of the token. |
 
-A video's status is derived (`app/library.py`): `archived` (has a file) → `downloading` / `queued` (latest download job) → `deleted` → `failed` → `missing` (known, not archived, nothing pending). While that job is queued, paused or running, videos and inventory entries also carry it as `job` (status, `run_after`, attempts, error), which tells a paused or waiting video from one that is up next.
+A video's status is derived (`video_status` in `app/views.sql`): `archived` (has a file) → `downloading` / `queued` (latest download job) → `deleted` → `failed` → `missing` (known, not archived, nothing pending). While that job is queued, paused or running, videos and inventory entries also carry it as `job` (state, reason, `waiting_on`, `waits_until`, attempts, error), which tells a paused or waiting video from one that is up next.
+
+A job's state is derived once, by the `job_state` view. It's the job's status, except that a queued job is `waiting` while its own `run_after` is ahead or, for downloads and checks, while YouTube is paused. `waiting_on` says which of those it's waiting for, and `wait_ends` when that ends. Every read uses the view, the worker's claim included, so what the Queue page shows and what runs next can't disagree. Nothing copies the pause onto job rows.
 
 ## Subscriptions
 
@@ -77,7 +82,11 @@ Download policies:
 
 Channel subscriptions follow the selected tabs (`/videos`, `/shorts`, `/streams`), which also set each entry's type. Playlists take every entry. Upcoming and live entries are skipped until they finish. A video already in the library is never queued again by a check, including ones the user removed (`deleted_at`) or whose download failed (retry is explicit).
 
-Switching a subscription off, by disabling it or setting its policy to `none`, pauses the downloads its policy had queued, so they stop without being lost; they wait in the Queue page's Paused tab. Downloads asked for one by one stay queued.
+The `entry_selection` view holds this rule. It gives each entry a `skip_reason` (`policy_none`, `subscription_off`, `removed`, `not_ready`, `tab_off` or `before_subscribing`), or none when the policy selects it. A check applies the view and the inventory page shows it, so the two can't drift.
+
+Switching a subscription off, by disabling it or setting its policy to `none`, pauses the downloads its policy had queued, so they stop without being lost; they wait in the Queue page's Paused tab. Switching it back on resumes exactly those. Downloads asked for one by one and jobs the owner paused aren't touched either way (`subscription_changed` in `app/checks.py`). A subscription that's off queues nothing, even from a check that was already running.
+
+Checks fall due on each subscription's own schedule, counted on from its last due time, so a long pause doesn't leave them bunched together for good.
 
 ## Downloads
 
@@ -92,16 +101,16 @@ The job then moves the media, thumbnail (JPEG), subtitles (VTT), chat and `.info
 
 Transient failures retry with backoff (15 min, 1 h, 4 h) before failing. "Video unavailable"-type errors fail immediately and set `unavailable_at`. Running downloads can be cancelled.
 
-YouTube gets a gentle pace. Each download worker rests 10–30 s after a download, yt-dlp sleeps 0.75 s between extraction requests and 5 s between subtitle files, and a job's start is spaced from the last one by `YTDLP_REQUEST_INTERVAL`.
+YouTube gets a gentle pace, and `app/pace.py` holds every number that sets it. After a download starts or finishes, no other starts for 2–4 minutes; after a check, 20–40 s. The gate enforces this across all workers, and jobs stay queued meanwhile. yt-dlp sleeps 0.75 s between extraction requests and 5 s between subtitle files, and each adapter call's start is spaced from the last one by `YTDLP_REQUEST_INTERVAL`.
 
-Every YouTube call goes through one gate (`app/gate.py`): downloads, checks and the API's URL lookups. A refusal from any of them pauses all of them, rather than letting each caller run into it. Refusals are a bot check, a CAPTCHA, a 429 or "try again later". A refused subtitle or live chat counts too, though its video is kept, because the next videos would lose theirs. A refused translated caption doesn't: YouTube limits those on their own, so losing one says little about the connection. While the gate is paused, calls are turned away before they reach YouTube:
+Every YouTube call goes through one gate (`app/gate.py`): downloads, checks and the API's URL lookups. A refusal from any of them pauses all of them, rather than letting each caller run into it. Refusals are a bot check, a CAPTCHA, a 429 or "try again later". A refused subtitle or live chat pauses for a fixed hour: its video is kept and counts as a success, but the next videos would lose theirs. A refused translated caption pauses nothing: YouTube limits those on their own, so losing one says little about the connection. Five generic download failures in a row also pause for a fixed hour, in case the connection is the trouble. While the gate is paused, calls are turned away before they reach YouTube:
 
 - a URL lookup answers 503;
 - a job goes back to the queue without using an attempt, and queued YouTube jobs show as waiting, retried ones included;
-- a running check stops at its next tab;
+- a running listing stops at its next entry, and a call that was waiting its turn doesn't start;
 - the scheduler queues no checks.
 
-A download that's already transferring finishes. A job YouTube refused also drops behind the others, so one video it won't serve can't hold up the queue. Pauses last 1, 2, 4, 8, then 12 hours while YouTube keeps refusing. Only a download or a lookup that begins after the latest refusal and goes through resets that ladder. Listings keep working through a bot check, so a check doesn't. An age-gated video isn't a refusal: it fails on its own, like other videos that need an account. The pause, the run of refusals and YouTube's last message are kept in the database, so a restart neither forgets the pause nor starts the ladder over. The Queue page shows the pause and what YouTube said, with "Resume now" (`POST /api/jobs/resume-youtube`), which ends the pause but keeps the count. It can also pause all YouTube work on request (`POST /api/jobs/pause-youtube`). Nothing was refused, so that doesn't climb the ladder, and a longer pause already running stands.
+A download that's already transferring finishes. A job counts YouTube's refusals of it and goes behind every job YouTube hasn't refused (`QUEUE_ORDER` in `app/jobs.py`), so one video it won't serve can't hold up the queue. Run now puts a job at the front instead, skipping its own wait. Pauses after a refusal last 1, 2, 4, 8, then 12 hours while YouTube keeps refusing. Only a completed download that began after the latest refusal resets that ladder: listings and lookups keep working through a bot check, so they prove nothing. An age-gated video isn't a refusal: it fails on its own, like other videos that need an account. The pause, its cause, the run of refusals and YouTube's last message are kept in the database, so a restart neither forgets the pause nor starts the ladder over. The Queue page shows the pause and what caused it, with "Resume now" (`POST /api/jobs/resume-youtube`), which ends the pause but keeps the count. It can also pause all YouTube work on request (`POST /api/jobs/pause-youtube`). Nothing was refused, so that doesn't climb the ladder, and a longer pause already running stands.
 
 System says what a cookie file offers without asking YouTube: whether it can be read, and whether it holds a signed-in session by yt-dlp's own test. Only using it shows whether YouTube accepts it.
 
@@ -134,8 +143,9 @@ JSON under `/api`; the OpenAPI schema is at `/docs`. Auth is an HttpOnly session
 | `/api/videos` | list/filter/sort, `counts`, get (with chapters, heatmap, SponsorBlock segments, subtitles, files), `resolve` and add by URL, download with per-video options, remove local files (into the trash) and `restore` them, watched, `media` (range requests), `thumbnail`, `subtitles/{lang}`, `comments`, `chat` |
 | `/api/channels` | list with counts and sorting, get, `avatar`, `banner` |
 | `/api/subscriptions` | `resolve`, create, list, get, update, delete, `check`, `entries`, download one entry |
-| `/api/jobs` | list with live progress (filter by `kind` and repeated `status`; `waiting` is queued until its `run_after`), `ids` of a filter, cancel, retry, pause and resume (one job, or many by id), remove, clear finished, retry failed, pause and resume all YouTube work |
-| `/api/settings`, `/api/system`, `/api/library/rescan` | runtime settings, versions/disk/library/trash stats, rescan (`force` skips the missing-files check) |
+| `/api/jobs` | list with live progress (filter by `kind` and repeated `status`, which matches a job's state), `ids` of a filter, cancel, retry, run now, pause and resume (one job, or many by id), remove, clear finished, retry failed (except videos gone from YouTube), pause and resume all YouTube work |
+| `/api/events` | the record, newest first, by job, video, subscription or group, paged by id |
+| `/api/settings`, `/api/system`, `/api/library/rescan` | runtime settings, versions/disk/library/trash stats, pace and recent activity, rescan (`force` skips the missing-files check) |
 
 ## Frontend
 
@@ -150,6 +160,7 @@ Svelte 5 (runes) single-page app in `src/`, built by Vite into `app/static/dist`
   - `#/video/:id`: player with chapters, most-replayed strip, SponsorBlock markers and labelled subtitle tracks; details, files, comments, chat replay;
   - `#/subscriptions` and `#/subscriptions/:id` (inventory and overrides);
   - `#/queue`;
+  - `#/activity` (the record, by group, job, video or subscription);
   - `#/system` (settings, health, storage).
 - **Code:** `src/lib/api.js` is the API client; `src/lib/types.d.ts` types the API for `npm run check`.
 

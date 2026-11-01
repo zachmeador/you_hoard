@@ -243,6 +243,7 @@
             <a class="lnk" href={href('/library', { channel: s.channel.id })}>Show in library</a>
           {/if}
           <a class="lnk" href={s.url} target="_blank" rel="noopener noreferrer">YouTube ↗</a>
+          <a class="lnk" href={href('/activity', { subscription: s.id })}>Activity</a>
         </p>
       </div>
     </div>

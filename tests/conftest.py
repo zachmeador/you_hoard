@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app import jobs
+from app import pace
 from app.config import config
 from app.gate import YouTubeGate
 from main import create_app
@@ -45,6 +45,12 @@ class Archive:
         assert response.status_code == 200, response.text
         return response.json()["items"]
 
+    def events(self, **params: Any) -> list[dict]:
+        """The recorded events, newest first."""
+        response = self.client.get("/api/events", params={"limit": 200, **params})
+        assert response.status_code == 200, response.text
+        return response.json()["items"]
+
     def wait(self, condition: Callable[[], Any], timeout: float = 5) -> Any:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -68,7 +74,7 @@ class Archive:
 def anonymous(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Archive]:
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(config, "MEDIA_DIR", tmp_path / "media")
-    monkeypatch.setattr(jobs, "DOWNLOAD_REST", (0.0, 0.0))
+    monkeypatch.setattr(pace, "REST", dict.fromkeys(pace.REST, (0.0, 0.0)))
     youtube = FakeYouTube()
     with TestClient(create_app(youtube=youtube)) as client:
         try:
@@ -84,3 +90,10 @@ def archive(anonymous: Archive) -> Archive:
     )
     assert response.status_code == 200, response.text
     return anonymous
+
+
+@pytest.fixture
+def stopped(archive: Archive) -> Archive:
+    """The archive with its workers stopped, so jobs stay where a test puts them."""
+    archive.call(archive.app.state.runner.stop)
+    return archive

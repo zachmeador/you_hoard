@@ -1,7 +1,9 @@
 """Library rescans rebuild the index from files, including TubeArchivist's layout."""
 
+import argparse
 import json
 
+from app.__main__ import rescan as command_line_rescan
 from tests.fake_youtube import CHANNEL_ID, MEDIA
 from tests.test_library import VIDEO, add
 
@@ -69,3 +71,73 @@ def test_rescan_relinks_moved_files_and_flags_missing_ones(archive):
         == f"elsewhere/{VIDEO}.mp4"
     )
     assert archive.client.get(f"/api/videos/{second['id']}").json()["status"] == "missing"
+
+
+def lose_most_of_the_library(archive, count: int = 12) -> None:
+    """Videos the database says are archived, with no files, as when the media folder is unmounted."""
+    for number in range(count):
+        archive.sql(
+            "INSERT INTO videos (youtube_id, title, media_path) VALUES (?, 'Gone', ?)",
+            (f"lost{number:07d}", f"Channel/lost{number:07d}.mp4"),
+        )
+
+
+def test_a_rescan_that_would_empty_the_library_declines_and_says_so(archive):
+    lose_most_of_the_library(archive)
+    queued = archive.client.post("/api/library/rescan").json()
+    failed = archive.wait_job(queued["job_id"], "failed")
+    assert failed["reason"] == "declined" and failed["error"].startswith("Rescan stopped:")
+    assert (
+        archive.sql("SELECT count(*) AS n FROM videos WHERE media_path IS NOT NULL")[0]["n"] == 12
+    )
+    declined = next(e for e in archive.events(job_id=failed["id"]) if e["event"] == "job.failed")
+    assert (declined["actor"], declined["reason"]) == ("app", "declined")
+
+    forced = archive.client.post("/api/library/rescan", json={"force": True}).json()
+    result = archive.wait_job(forced["job_id"])["result"]
+    assert result["missing"] == 12
+
+
+def test_the_command_line_stops_a_rescan_that_would_empty_the_library(archive, capsys):
+    lose_most_of_the_library(archive)
+    db = archive.app.state.db
+    assert archive.call(command_line_rescan, argparse.Namespace(force=False), db) == 1
+    assert "Rescan stopped" in capsys.readouterr().err
+    assert not [e for e in archive.events() if e["event"] == "scan.completed"]
+
+    assert archive.call(command_line_rescan, argparse.Namespace(force=True), db) == 0
+    assert "missing: 12" in capsys.readouterr().out
+    scan = next(e for e in archive.events() if e["event"] == "scan.completed")
+    assert scan["actor"] == "cli" and scan["detail"].endswith("12 missing")
+
+
+def test_a_video_whose_file_is_lost_says_when_until_it_is_found_or_fetched_again(archive):
+    archive.youtube.add(VIDEO)
+    video = add(archive)
+    archive.wait_job(video["job_id"])
+
+    def lost_at():
+        return archive.client.get(f"/api/videos/{video['id']}").json()["lost_at"]
+
+    path = archive.media / archive.client.get(f"/api/videos/{video['id']}").json()["media_path"]
+    assert lost_at() is None
+    path.rename(path.with_name("away.mp4.hidden"))
+    rescan(archive)
+    assert lost_at() > "2026"
+    assert archive.client.get(f"/api/videos/{video['id']}").json()["status"] == "missing"
+
+    # Found again, in another place: the rescan picks it up and forgets it was lost.
+    elsewhere = archive.media / "elsewhere" / f"{VIDEO}.mp4"
+    elsewhere.parent.mkdir()
+    path.with_name("away.mp4.hidden").rename(elsewhere)
+    assert rescan(archive)["added"] == 1
+    assert lost_at() is None
+
+    # Lost once more, then downloaded again.
+    elsewhere.unlink()
+    rescan(archive)
+    assert lost_at() > "2026"
+    again = archive.client.post(f"/api/videos/{video['id']}/download", json={}).json()
+    archive.wait_job(again["job_id"])
+    assert lost_at() is None
+    assert archive.client.get(f"/api/videos/{video['id']}").json()["status"] == "archived"

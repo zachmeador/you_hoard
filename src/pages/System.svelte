@@ -4,7 +4,7 @@
   import { api } from '../lib/api.js'
   import { copyText } from '../lib/clipboard.js'
   import { confirmAction } from '../lib/confirm.svelte.js'
-  import { bytes, int, interval, qualityLabel, rel } from '../lib/format.js'
+  import { bytes, int, interval, qualityLabel, rel, secondsRange } from '../lib/format.js'
   import { jobResult } from '../lib/jobs.js'
   import { Loader } from '../lib/loader.svelte.js'
   import { poll } from '../lib/poll.js'
@@ -42,7 +42,7 @@
   const lastScan = $derived(
     (scans.data?.items ?? []).reduce((/** @type {Job | null} */ newest, job) => (!newest || job.id > newest.id ? job : newest), null)
   )
-  const refused = $derived(lastScan?.status === 'failed' && /^Rescan stopped/.test(lastScan.error ?? ''))
+  const declined = $derived(lastScan?.reason === 'declined')
   const used = $derived(info?.disk ? Math.round((info.disk.used / info.disk.total) * 100) : 0)
   const ageDays = $derived.by(() => {
     const m = /^(\d{4})\.(\d{1,2})\.(\d{1,2})/.exec(info?.yt_dlp ?? '')
@@ -256,7 +256,7 @@
         <p class="p">Rescanning…</p>
       {:else if lastScan?.status === 'failed'}
         <p class="p">{rel(lastScan.finished_at, clock.now)}: {lastScan.error}</p>
-        {#if refused}
+        {#if declined}
           <button type="button" class="btn danger sm" onclick={() => rescan(true)}>Rescan anyway</button>
         {/if}
       {:else if lastScan}
@@ -336,6 +336,20 @@
             <span class="x"></span>
           </li>
         </ul>
+      </section>
+
+      <section aria-labelledby="pace-h">
+        <h2 class="label" id="pace-h">Pace</h2>
+        <p class="p">{secondsRange(info.pace.download_rest)} between downloads</p>
+        <p class="p">{secondsRange(info.pace.check_rest)} between checks</p>
+        <dl class="kv">
+          <dt>Downloaded</dt>
+          <dd>{int(info.activity.downloads_last_hour)} in the last hour, {int(info.activity.downloads_last_day)} in the last day</dd>
+          <dt>Last download</dt>
+          <dd>{info.activity.last_download_at ? rel(info.activity.last_download_at, clock.now) : 'None yet'}</dd>
+          <dt>Last refusal</dt>
+          <dd>{info.activity.last_refusal_at ? rel(info.activity.last_refusal_at, clock.now) : 'None recorded'}</dd>
+        </dl>
       </section>
 
       <section aria-labelledby="disk-h">

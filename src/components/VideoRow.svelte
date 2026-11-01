@@ -4,7 +4,6 @@
   import { queue } from '../lib/queue.svelte.js'
   import { href } from '../lib/router.svelte.js'
   import { videoState } from '../lib/status.js'
-  import { clock } from '../lib/ui.svelte.js'
   import Icon from './Icon.svelte'
   import StatusWord from './StatusWord.svelte'
   import Thumb from './Thumb.svelte'
@@ -13,7 +12,7 @@
   /** @type {{ video: Video }} */
   let { video } = $props()
 
-  const phase = $derived(videoState(video, queue.jobFor(video.id), clock.now))
+  const phase = $derived(videoState(video, queue.jobFor(video.id)))
   const target = $derived(href(`/video/${video.id}`))
   const kind = $derived(video.video_type === 'video' ? '' : KIND_WORDS[video.video_type])
   const archived = $derived(video.status === 'archived')

@@ -8,12 +8,12 @@ import sys
 import threading
 from pathlib import Path
 
-from app import tubearchivist
+from app import events, tubearchivist
 from app.auth import hash_password
 from app.config import apply_umask, config
 from app.db import Database, dumps
 from app.gate import YouTubeGate
-from app.jobs import JobRunner, Refused
+from app.jobs import Declined, JobRunner, summary
 from app.scanner import run_scan
 from app.settings import Settings
 from app.youtube import YouTube
@@ -24,9 +24,10 @@ async def rescan(args: argparse.Namespace, db: Database) -> int:
     job = {"id": 0, "options": dumps({"force": args.force})}
     try:
         result = await run_scan(runner, job, threading.Event())
-    except Refused as error:
+    except Declined as error:
         print(f"{error} (Run it again with --force.)", file=sys.stderr)
         return 1
+    await events.record(db, "scan.completed", actor="cli", detail=summary("scan", result))
     for key, value in result.items():
         print(f"{key}: {value}")
     return 0

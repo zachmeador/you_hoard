@@ -13,6 +13,7 @@
   import TabBar from './components/TabBar.svelte'
   import Toasts from './components/Toasts.svelte'
   import TopBar from './components/TopBar.svelte'
+  import Activity from './pages/Activity.svelte'
   import Auth from './pages/Auth.svelte'
   import Library from './pages/Library.svelte'
   import NotFound from './pages/NotFound.svelte'
@@ -79,6 +80,8 @@
           <SubscriptionDetail id={route.id} />
         {:else if route.name === 'queue'}
           <Queue />
+        {:else if route.name === 'activity'}
+          <Activity />
         {:else if route.name === 'system'}
           <System />
         {:else}

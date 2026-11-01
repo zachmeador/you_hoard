@@ -10,12 +10,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 
-from app import __version__, trash
+from app import __version__, events, pace, trash
 from app.api.deps import clean_languages, get_db, get_runner, get_settings, get_youtube
 from app.config import config
-from app.db import Database, now
+from app.db import Database
 from app.gate import YouTubeGate
-from app.jobs import JobRunner
+from app.jobs import JobRunner, Priority
 from app.languages import language_options
 from app.settings import Settings
 from app.youtube import QUALITIES, cookie_state
@@ -92,6 +92,7 @@ def ffmpeg_version() -> str | None:
 @router.get("/system")
 async def system_status(
     db: Database = Depends(get_db),
+    runner: JobRunner = Depends(get_runner),
     youtube: YouTubeGate = Depends(get_youtube),
 ):
     versions = await asyncio.to_thread(youtube.versions)
@@ -109,15 +110,7 @@ async def system_status(
                   (SELECT count(*) FROM subscriptions) AS subscriptions
            FROM videos WHERE deleted_at IS NULL"""
     )
-    queue = await db.fetch_one(
-        """SELECT count(CASE WHEN status = 'queued' AND coalesce(run_after, '') <= ? THEN 1 END)
-                      AS queued,
-                  count(CASE WHEN status = 'queued' AND run_after > ? THEN 1 END) AS waiting,
-                  count(CASE WHEN status = 'running' THEN 1 END) AS running,
-                  count(CASE WHEN status = 'failed' THEN 1 END) AS failed
-           FROM jobs""",
-        (now(), now()),
-    )
+    counts = await runner.counts()
     return {
         "version": __version__,
         "yt_dlp": versions["yt_dlp"],
@@ -127,7 +120,12 @@ async def system_status(
         "media_dir": str(config.media_root),
         "disk": disk,
         "library": library,
-        "queue": queue,
+        "queue": {state: counts[state] for state in ("queued", "waiting", "running", "failed")},
+        "pace": {
+            "download_rest": list(pace.REST["download"]),
+            "check_rest": list(pace.REST["check"]),
+        },
+        "activity": await events.activity(db),
         "trash": await asyncio.to_thread(trash.summary),
         **youtube.status,
     }
@@ -141,4 +139,7 @@ class Rescan(BaseModel):
 @router.post("/library/rescan", status_code=202)
 async def rescan_library(body: Rescan | None = None, runner: JobRunner = Depends(get_runner)):
     options = {"force": True} if body and body.force else None
-    return {"job_id": await runner.enqueue("scan", options=options, priority=1)}
+    job_id = await runner.enqueue(
+        "scan", options=options, priority=Priority.SCAN, origin="user", actor="owner"
+    )
+    return {"job_id": job_id}

@@ -5,6 +5,8 @@ Where work on YouHoard is planned and tracked, in git. One file per workstream; 
 | File | Workstream | Status |
 | --- | --- | --- |
 | [redesign.md](redesign.md) | Rebuild the frontend in the Strongroom design, plus the API additions it needs ([contract](redesign-api.md)) | Done; follow-ups open |
+| [job-core.md](job-core.md) | One owner for job state, a record of what happened, and jobs that say why | Done |
+| [cookie-setup.md](cookie-setup.md) | Load, test and reconnect YouTube cookies from the System page | Not started |
 
 ## Working agreements
 

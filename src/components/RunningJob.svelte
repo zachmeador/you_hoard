@@ -12,6 +12,7 @@
 
   const progress = $derived(job.progress)
   const title = $derived(jobItemTitle(job))
+  const activity = $derived(href('/activity', { job: job.id }))
 </script>
 
 {#if job.kind === 'download'}
@@ -51,6 +52,7 @@
       {/if}
     </div>
     <div class="acts">
+      <a class="btn sm quiet" href={activity} aria-label="History of {title}" title="History"><Icon name="activity" /></a>
       <button type="button" class="btn sm" aria-label="Cancel {title}" onclick={oncancel}><Icon name="x" />Cancel</button>
     </div>
   </div>
@@ -67,6 +69,7 @@
       <div class="prog ind"><i></i></div>
     </div>
     <div class="acts">
+      <a class="btn sm quiet" href={activity} aria-label="History of {title}" title="History"><Icon name="activity" /></a>
       <button type="button" class="btn sm" aria-label="Cancel {job.subscription ? `check of ${job.subscription.title}` : 'rescan'}" onclick={oncancel}>
         <Icon name="x" />Cancel
       </button>

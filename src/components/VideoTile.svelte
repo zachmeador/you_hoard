@@ -13,7 +13,7 @@
   /** @type {{ video: Video }} */
   let { video } = $props()
 
-  const phase = $derived(videoState(video, queue.jobFor(video.id), clock.now))
+  const phase = $derived(videoState(video, queue.jobFor(video.id)))
   const target = $derived(href(`/video/${video.id}`))
 </script>
 

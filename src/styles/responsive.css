@@ -270,6 +270,12 @@
       -8px 0 0 var(--bg-2),
       8px 0 0 var(--bg-2);
   }
+  .q .c-act.c-side {
+    width: auto;
+  }
+  .q .c-act .history-btn {
+    display: none;
+  }
   .qsel {
     height: auto;
     flex-wrap: wrap;
@@ -303,6 +309,13 @@
   .qsum .bulk {
     grid-column: 1/-1;
     justify-self: start;
+  }
+  .qsum .bulk .menu {
+    left: 0;
+    right: auto;
+  }
+  .topnav a {
+    padding: 0 8px;
   }
   .pseg {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -345,7 +358,7 @@
   }
   .tabbar {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     position: fixed;
     left: 0;
     right: 0;

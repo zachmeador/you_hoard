@@ -20,13 +20,14 @@ async def run_download(
     video = await db.fetch_one("SELECT * FROM videos WHERE id = ?", (job["video_id"],))
     if video["media_path"]:
         return {"skipped": "Already archived"}
-    job_options = loads(job["options"]) or {}
     subscription = None
-    if job_options.get("subscription_id"):
+    if job["via_subscription_id"]:
         subscription = await db.fetch_one(
-            "SELECT * FROM subscriptions WHERE id = ?", (job_options["subscription_id"],)
+            "SELECT * FROM subscriptions WHERE id = ?", (job["via_subscription_id"],)
         )
-    options = resolve_options(job_options, subscription, await runner.settings.all())
+    options = resolve_options(
+        loads(job["options"]) or {}, subscription, await runner.settings.all()
+    )
 
     youtube_id = video["youtube_id"]
     request = DownloadRequest(
@@ -57,6 +58,8 @@ async def run_download(
     progress.update({"status": "processing"})
     facts = archive_facts(info)
     own = info.setdefault("_youhoard", {})
+    # The gate has dealt with the refusal; the job only records that the extras may be missing.
+    refused = own.pop("refused", None)
     own["audio_languages"] = facts["audio_languages"]
     own["acodec"] = facts["acodec"]
     async with db.transaction() as conn:
@@ -95,4 +98,5 @@ async def run_download(
             facts=facts,
         )
         await conn.execute("UPDATE videos SET unavailable_at = NULL WHERE id = ?", (video["id"],))
-    return {"media_path": media_path, "media_size": size, "height": info.get("height")}
+    result = {"media_path": media_path, "media_size": size, "height": info.get("height")}
+    return {**result, "refused": refused} if refused else result

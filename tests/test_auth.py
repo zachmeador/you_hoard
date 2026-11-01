@@ -15,6 +15,7 @@ import pytest
         "/api/channels/1/banner",
         "/api/subscriptions",
         "/api/jobs",
+        "/api/events",
         "/api/settings",
         "/api/system",
     ],

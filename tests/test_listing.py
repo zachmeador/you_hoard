@@ -34,7 +34,7 @@ def build_library(archive):
         videos[name] = add(archive, IDS[name])
         job_id = videos[name]["job_id"]
         if name == "echo":
-            archive.wait(lambda job_id=job_id: archive.job(job_id)["run_after"])
+            archive.wait(lambda job_id=job_id: archive.job(job_id)["state"] == "waiting")
         else:
             archive.wait_job(job_id, "failed" if name == "delta" else "completed")
     archive.client.delete(f"/api/videos/{videos['foxtrot']['id']}")
@@ -136,7 +136,9 @@ def test_jobs_wait_for_a_premiere_without_counting_as_queued(archive):
 
     waiting = archive.client.get("/api/jobs", params={"status": "waiting"}).json()
     assert [job["video"]["title"] for job in waiting["items"]] == ["Echo"]
-    assert waiting["items"][0]["run_after"] > "2026"
+    premiere = waiting["items"][0]
+    assert premiere["waits_until"] > "2026"
+    assert (premiere["waiting_on"], premiere["reason"]) == ("premiere", "premiere")
     assert archive.client.get("/api/jobs", params={"status": "queued"}).json()["total"] == 0
 
     queue = archive.client.get("/api/system").json()["queue"]
@@ -155,15 +157,17 @@ def test_videos_carry_their_download_job_until_it_finishes(archive):
         return archive.client.get(f"/api/videos/{videos[name]['id']}").json()["job"]
 
     assert job("alpha") is None and job("delta") is None and job("foxtrot") is None
-    assert job("hotel")["status"] == "running"
+    assert job("hotel")["state"] == "running"
     echo = job("echo")
-    assert echo["status"] == "queued" and echo["run_after"] > "2026"
+    assert (echo["state"], echo["waiting_on"]) == ("waiting", "premiere")
+    assert echo["waits_until"] > "2026"
+    assert (echo["attempts"], echo["max_attempts"]) == (0, 4)
 
     archive.client.post("/api/jobs/pause", json={"ids": [videos["echo"]["job_id"]]})
     listed = archive.client.get("/api/videos", params={"per_page": 200}).json()["items"]
     paused = next(video for video in listed if video["title"] == "Echo")
-    assert paused["status"] == "queued" and paused["job"]["status"] == "paused"
-    assert paused["job"]["run_after"] == echo["run_after"]
+    assert paused["status"] == "queued" and paused["job"]["state"] == "paused"
+    assert paused["job"]["waiting_on"] is None and paused["job"]["waits_until"] is None
 
 
 def job_list(archive, **params):
@@ -179,7 +183,7 @@ def test_waiting_jobs_list_apart_from_queued_ones_soonest_first(archive):
         archive.youtube.add(youtube_id, live_status="is_upcoming")
         waiting.append(add(archive, youtube_id)["job_id"])
     for job_id in waiting:
-        archive.wait(lambda job_id=job_id: archive.job(job_id)["run_after"])
+        archive.wait(lambda job_id=job_id: archive.job(job_id)["state"] == "waiting")
     first, second, third = waiting
     for job_id, day in ((first, 2), (second, 1), (third, 2)):
         run_after = f"2099-01-0{day}T00:00:00Z"

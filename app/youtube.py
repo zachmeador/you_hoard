@@ -24,6 +24,7 @@ from yt_dlp.globals import supported_js_runtimes
 from yt_dlp.postprocessor import SponsorBlockPP
 from yt_dlp.utils import DownloadCancelled
 
+from app import pace
 from app.config import config
 from app.layout import VIDEO_ID, YOUTUBE_CHANNEL_ID
 from app.tracks import (
@@ -46,10 +47,6 @@ NOT_READY = {"is_upcoming", "is_live", "post_live"}
 QUALITIES = ["best", "2160p", "1440p", "1080p", "720p", "480p", "360p"]
 # Resolution first, then the most playable container and codec at that resolution.
 FORMAT_SORT = ["res", "ext:mp4:m4a", "vcodec:h264"]
-# Pauses yt-dlp takes between requests while extracting, and between subtitle files (yt-dlp's
-# own suggestion for many downloads in a row); YouTube rate-limits subtitles first.
-REQUEST_SLEEP = 0.75
-SUBTITLE_SLEEP = 5
 SPONSOR_CATEGORIES = [
     "sponsor",
     "intro",
@@ -144,6 +141,17 @@ class Cancelled(YouTubeError):
     pass
 
 
+class Paused(Exception):
+    """YouTube work is waiting, after a refusal or because the owner asked.
+
+    Not a YouTubeError, so the API's handlers for those don't turn it into a 502.
+    """
+
+    def __init__(self, until: str) -> None:
+        super().__init__(f"YouTube is paused until {until}")
+        self.until = until
+
+
 def classify(error: Exception) -> YouTubeError:
     if isinstance(error, YouTubeError):
         return error
@@ -159,6 +167,12 @@ def classify(error: Exception) -> YouTubeError:
         if any(word in lowered for word in words):
             return kind(text)
     return YouTubeError(text)
+
+
+def is_generic(error: Exception) -> bool:
+    """A failure with nothing more specific to say: worth another try, and a sign of trouble when
+    it keeps happening."""
+    return type(error) is YouTubeError
 
 
 class ExtrasLogger(YtDlpLogger):
@@ -351,6 +365,9 @@ class YouTube:
         )
         self._lock = asyncio.Lock()
         self._last_start = 0.0
+        # Runs before each attempt and for each entry of a listing, on whatever thread is asking.
+        # The gate sets it to raise Paused while YouTube work is paused.
+        self.before_call: Callable[[], None] = lambda: None
 
     def options(self, **extra: Any) -> dict[str, Any]:
         runtime = {"path": config.YTDLP_JS_RUNTIME_PATH} if config.YTDLP_JS_RUNTIME_PATH else {}
@@ -363,7 +380,7 @@ class YouTube:
             "retries": 5,
             "fragment_retries": 10,
             "extractor_retries": 3,
-            "sleep_interval_requests": REQUEST_SLEEP,
+            "sleep_interval_requests": pace.REQUEST_SLEEP,
             "noplaylist": True,
             "js_runtimes": {config.YTDLP_JS_RUNTIME: runtime},
         }
@@ -372,23 +389,29 @@ class YouTube:
         options.update(extra)
         return options
 
-    async def _run(self, work: Callable[[], Any], retries: int = 2) -> Any:
+    async def _run(self, work: Callable[[], Any], retries: int | None = None) -> Any:
+        if retries is None:
+            retries = pace.CALL_RETRIES
         for attempt in range(retries + 1):
             async with self._lock:
                 delay = self.request_interval - (time.monotonic() - self._last_start)
                 if delay > 0:
                     await asyncio.sleep(delay)
+                # A pause that began while this call waited its turn stops it here, on any attempt.
+                self.before_call()
                 self._last_start = time.monotonic()
             try:
                 return await asyncio.to_thread(work)
             except DownloadCancelled as error:
                 raise Cancelled("Cancelled") from error
+            except Paused:
+                raise
             except Exception as error:
                 failure = classify(error)
                 if type(failure) is not YouTubeError or attempt == retries:
                     raise failure from error
                 logger.warning("yt-dlp failed, retrying: %s", failure)
-                await asyncio.sleep(5 * 3**attempt)
+                await asyncio.sleep(pace.CALL_RETRY_SLEEP * 3**attempt)
 
     async def resolve_source(self, kind: str, url: str) -> Source:
         def work() -> Source:
@@ -431,7 +454,9 @@ class YouTube:
 
         def work() -> Listing:
             options = self.options(
-                extract_flat="in_playlist", noplaylist=False, sleep_interval_requests=1
+                extract_flat="in_playlist",
+                noplaylist=False,
+                sleep_interval_requests=pace.LISTING_SLEEP,
             )
             entries: list[Entry] = []
             seen: set[str] = set()
@@ -447,6 +472,8 @@ class YouTube:
                 for raw in info.get("entries") or ():
                     if cancelled is not None and cancelled.is_set():
                         raise DownloadCancelled("Cancelled")
+                    # The entries arrive page by page, so each one is a chance to stop asking.
+                    self.before_call()
                     entry = _entry(raw, kind, video_type)
                     if entry is None or entry.youtube_id in seen:
                         continue
@@ -620,7 +647,7 @@ class YouTube:
             writeautomaticsub=any(track.source != UPLOADED for track in tracks),
             subtitleslangs=languages,
             subtitlesformat="vtt/best",
-            sleep_interval_subtitles=SUBTITLE_SLEEP,
+            sleep_interval_subtitles=pace.SUBTITLE_SLEEP,
             postprocessors=[
                 {"key": "FFmpegSubtitlesConvertor", "format": "vtt", "when": "before_dl"}
             ],

@@ -410,6 +410,7 @@
 .callout q {
   quotes: '“' '”';
   color: var(--ink);
+  overflow-wrap: anywhere;
 }
 .callout.gone {
   border-color: var(--gone-line);

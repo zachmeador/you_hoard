@@ -6,7 +6,7 @@ from fastapi import HTTPException, Request
 
 from app.db import Database, loads
 from app.gate import YouTubeGate
-from app.jobs import JobRunner
+from app.jobs import JobRunner, max_attempts
 from app.library import VIDEO_SELECT, quality_label
 from app.settings import Settings
 from app.youtube import video_url
@@ -59,9 +59,12 @@ def active_job(row: dict[str, Any]) -> dict[str, Any] | None:
     if row["job_status"] not in ("queued", "paused", "running"):
         return None
     return {
-        "status": row["job_status"],
-        "run_after": row["job_run_after"],
+        "state": row["job_state"],
+        "reason": row["job_reason"],
+        "waiting_on": row["job_waiting_on"],
+        "waits_until": row["job_waits_until"],
         "attempts": row["job_attempts"],
+        "max_attempts": max_attempts("download"),
         "error": row["job_error"],
     }
 
@@ -85,6 +88,7 @@ def video_out(row: dict[str, Any]) -> dict[str, Any]:
         "job_id": row["job_id"],
         "job": active_job(row),
         "error": row["job_error"] if row["status"] == "failed" else None,
+        "error_reason": row["job_reason"] if row["status"] == "failed" else None,
         "unavailable": row["unavailable_at"] is not None,
         "unavailable_at": row["unavailable_at"],
         "availability": row["availability"],
@@ -102,6 +106,7 @@ def video_out(row: dict[str, Any]) -> dict[str, Any]:
         "archived_at": row["archived_at"],
         "watched_at": row["watched_at"],
         "deleted_at": row["deleted_at"],
+        "lost_at": row["lost_at"],
         "created_at": row["created_at"],
         "youtube_url": video_url(row["youtube_id"]),
         "thumbnail_url": f"/api/videos/{video_id}/thumbnail?v={row['archived_at']}"

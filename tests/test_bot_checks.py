@@ -1,4 +1,4 @@
-"""A bot check pauses all YouTube work, and downloads rest between one another."""
+"""A bot check pauses all YouTube work, and jobs rest between one another."""
 
 import asyncio
 import contextlib
@@ -8,14 +8,22 @@ import time
 import pytest
 from yt_dlp.utils import DownloadError
 
-from app import jobs
-from app.gate import Paused, YouTubeGate
-from app.youtube import Blocked, Inaccessible, Unavailable, YouTubeError, classify
+from app import pace
+from app.db import parse_time, utcnow
+from app.gate import YouTubeGate
+from app.youtube import (
+    Blocked,
+    Inaccessible,
+    Paused,
+    Unavailable,
+    YouTubeError,
+    classify,
+)
 from tests.fake_youtube import AVATAR, AVATAR_URL, CHANNEL_ID
 from tests.test_details import sidecar_of
 from tests.test_jobs import hold_queue
 from tests.test_library import VIDEO, add
-from tests.test_subscriptions import CHANNEL_URL, check, ids, seed_tab, subscribe
+from tests.test_subscriptions import CHANNEL_URL, PLAYLIST_URL, check, ids, seed_tab, subscribe
 
 BOT = "Sign in to confirm you're not a bot"
 AGE_GATE = "Sign in to confirm your age. This video may be inappropriate for some users."
@@ -58,7 +66,9 @@ def queue_blocked(archive) -> list[dict]:
     archive.youtube.download_failures[IDS[0]] = Blocked(BOT)
     videos = queue_stopped(archive, IDS)
     archive.wait(lambda: archive.gate.paused)
-    archive.wait(lambda: all(archive.job(video["job_id"])["run_after"] for video in videos))
+    archive.wait(
+        lambda: all(archive.job(video["job_id"])["state"] == "waiting" for video in videos)
+    )
     return videos
 
 
@@ -124,9 +134,12 @@ def test_a_bot_check_pauses_every_download_instead_of_each_trying(archive):
     assert 3590 < paused_for(archive.gate) <= 3600
     for video in videos:
         job = archive.job(video["job_id"])
-        assert job["status"] == "queued" and job["run_after"] == resumes
-    first = archive.job(videos[0]["job_id"])
+        assert job["status"] == "queued" and job["state"] == "waiting"
+        assert (job["waiting_on"], job["waits_until"]) == ("youtube", resumes)
+    first, *others = (archive.job(video["job_id"]) for video in videos)
     assert first["attempts"] == 0 and first["error"] == BOT  # the block isn't the job's fault
+    assert (first["reason"], first["refusals"]) == ("refused", 1)
+    assert [(job["reason"], job["refusals"]) for job in others] == [(None, 0), (None, 0)]
 
     archive.youtube.download_failures.clear()
     resume(archive)
@@ -160,14 +173,15 @@ def test_a_check_that_succeeds_does_not_reset_the_backoff(archive):
     assert archive.gate.refusals == 2
 
 
-def test_a_lookup_that_succeeds_resets_the_backoff(archive):
+def test_a_lookup_that_succeeds_does_not_reset_the_backoff(archive):
     archive.youtube.add(VIDEO)
 
     def look_up() -> None:
         response = archive.client.post("/api/videos/resolve", json={"url": VIDEO})
         assert response.status_code == 200, response.text
 
-    assert 3590 < second_pause(archive, look_up) <= 3600
+    assert 7190 < second_pause(archive, look_up) <= 7200
+    assert archive.gate.refusals == 2
 
 
 def test_a_download_that_succeeds_resets_the_backoff(archive):
@@ -204,6 +218,117 @@ def test_a_refused_video_goes_behind_the_others_so_it_cannot_hold_up_the_queue(a
     assert archive.job(first["job_id"])["status"] == "queued"
 
 
+def test_a_refused_job_goes_behind_every_job_youtube_has_not_refused(archive):
+    stuck, middle, low = IDS
+    one_at_a_time(archive)
+    runner = archive.app.state.runner
+    archive.call(runner.stop)
+    archive.youtube.download_failures[stuck] = Blocked(BOT)
+    for youtube_id in IDS:
+        archive.youtube.add(youtube_id)
+    jobs = [add(archive, youtube_id)["job_id"] for youtube_id in IDS]
+    for job_id, priority in zip(jobs, (10, 5, 0), strict=True):
+        archive.sql("UPDATE jobs SET priority = ? WHERE id = ?", (priority, job_id))
+    archive.call(runner.start)
+    archive.wait(lambda: archive.gate.paused)
+    resume(archive)
+    archive.wait(lambda: len(downloads(archive)) == 4)
+    # The refused job has the highest priority and still goes last.
+    assert downloads(archive) == [stuck, middle, low, stuck]
+
+
+def test_five_generic_download_failures_in_a_row_pause_youtube_for_an_hour(archive):
+    failing = [f"failure{n:04d}" for n in range(pace.FAILURE_STREAK + 1)]
+    for youtube_id in failing:
+        archive.youtube.add(youtube_id)
+        archive.youtube.download_failures[youtube_id] = YouTubeError("HTTP Error 503: Unavailable")
+    queue_stopped(archive, failing)
+    archive.wait(lambda: archive.gate.paused)
+    time.sleep(0.2)  # time enough for the worker to have moved on to the next job
+    assert downloads(archive) == failing[: pace.FAILURE_STREAK]
+    assert 3590 < paused_for(archive.gate) <= 3600
+    assert archive.gate.refusals == 0  # nothing was refused, so this stays off the ladder
+
+
+def test_a_completed_download_ends_the_streak_of_failures(archive):
+    failing = [f"failure{n:04d}" for n in range(pace.FAILURE_STREAK * 2 - 1)]
+    completed = "completed01"
+    archive.youtube.add(completed)
+    for youtube_id in failing:
+        archive.youtube.add(youtube_id)
+        archive.youtube.download_failures[youtube_id] = YouTubeError("HTTP Error 503: Unavailable")
+    # One short of a streak, a success, then a full streak: only the last failure pauses.
+    order = [*failing[: pace.FAILURE_STREAK - 1], completed, *failing[pace.FAILURE_STREAK - 1 :]]
+    queue_stopped(archive, order)
+    archive.wait(lambda: archive.gate.paused)
+    time.sleep(0.2)  # time enough for the worker to have moved on to the next job
+    assert downloads(archive) == order
+    assert 3590 < paused_for(archive.gate) <= 3600
+
+
+def test_pausing_and_resuming_leave_a_retry_backoff_and_a_premiere_wait_as_they_were(archive):
+    retry, premiere = IDS[:2]
+    archive.youtube.add(retry)
+    archive.youtube.download_failures[retry] = YouTubeError("HTTP Error 503: Unavailable")
+    archive.youtube.add(premiere, live_status="is_upcoming")
+    jobs = [add(archive, youtube_id)["job_id"] for youtube_id in (retry, premiere)]
+
+    def waits() -> dict[int, str | None]:
+        return {
+            row["id"]: row["run_after"] for row in archive.sql("SELECT id, run_after FROM jobs")
+        }
+
+    archive.wait(lambda: all(waits().values()))  # each has its own wait
+    before = waits()
+    pause(archive)
+    assert waits() == before  # pausing writes to no job
+    resume(archive)
+    assert waits() == before  # and neither does Resume now
+    for action in ("pause", "resume"):
+        assert archive.client.post(f"/api/jobs/{jobs[0]}/{action}").status_code == 200
+        assert waits() == before
+
+
+def test_a_job_resumed_or_queued_during_a_pause_is_waiting_on_youtube_never_queued(archive):
+    runner = archive.app.state.runner
+    archive.call(runner.stop)
+    for youtube_id in (*IDS, LOOKUP):
+        archive.youtube.add(youtube_id)
+    held, resumed, retried, again = (add(archive, youtube_id) for youtube_id in (*IDS, LOOKUP))
+    assert archive.client.post(f"/api/jobs/{resumed['job_id']}/pause").status_code == 200
+    for video in (retried, again):
+        assert archive.client.post(f"/api/jobs/{video['job_id']}/cancel").status_code == 200
+    pause(archive)
+
+    assert archive.client.post(f"/api/jobs/{resumed['job_id']}/resume").status_code == 200
+    assert archive.client.post(f"/api/jobs/{retried['job_id']}/retry").status_code == 200
+    queued = archive.client.post(f"/api/videos/{again['id']}/download", json={})
+    new_job = queued.json()["job_id"]
+    assert new_job != again["job_id"]
+    until = archive.gate.resumes_at
+    jobs = [held["job_id"], resumed["job_id"], retried["job_id"], new_job]
+    for job_id in jobs:
+        job = archive.job(job_id)
+        assert (job["status"], job["state"]) == ("queued", "waiting")
+        assert (job["waiting_on"], job["waits_until"]) == ("youtube", until)
+    counts = archive.client.get("/api/jobs").json()["counts"]
+    assert counts["queued"] == 0 and counts["waiting"] == 4
+    assert archive.jobs(status="queued") == []
+
+    resume(archive)
+    for job_id in jobs:
+        job = archive.job(job_id)
+        assert (job["state"], job["waiting_on"], job["waits_until"]) == ("queued", None, None)
+
+
+def test_the_gate_stops_the_adapters_calls_while_paused(archive):
+    assert archive.youtube.before_call == archive.gate.check
+    archive.gate.check()  # nothing is paused
+    pause(archive)
+    with pytest.raises(Paused):
+        archive.gate.check()
+
+
 def test_a_refused_subtitle_keeps_the_video_and_holds_the_next_one(archive):
     kept, next_up = IDS[:2]
     archive.youtube.add(kept, refused_extras=RATE_LIMIT)
@@ -211,16 +336,22 @@ def test_a_refused_subtitle_keeps_the_video_and_holds_the_next_one(archive):
     archive.wait_job(first["job_id"])
 
     gate = archive.gate
-    assert gate.paused and gate.refusals == 1 and gate.reason == RATE_LIMIT
+    assert gate.paused and gate.reason == RATE_LIMIT and gate.cause == "extras"
+    assert gate.refusals == 0  # YouTube refused an extra, not the video: off the ladder
+    assert 3590 < paused_for(gate) <= 3600  # one fixed hour
     time.sleep(0.2)  # time enough for the worker to have moved on to the next job
     assert downloads(archive) == [kept]
     waiting = archive.job(second["job_id"])
-    assert waiting["status"] == "queued" and waiting["run_after"] == gate.resumes_at
+    assert waiting["state"] == "waiting" and waiting["waits_until"] == gate.resumes_at
     video = archive.client.get(f"/api/videos/{first['id']}").json()
+    assert video["status"] == "archived"
     assert "refused" not in sidecar_of(archive, video)["_youhoard"]
+    done = archive.job(first["job_id"])
+    assert "refused" in done["result"]
+    assert "lost to a refusal" in archive.events(job_id=first["job_id"])[0]["detail"]
 
 
-def test_a_download_with_refused_extras_does_not_reset_the_backoff(archive):
+def test_a_download_with_refused_extras_still_counts_as_a_success(archive):
     video = ids("vid", 1)[0]
     seed_tab(archive, "video", [video])
     sub = subscribe(archive)
@@ -229,7 +360,8 @@ def test_a_download_with_refused_extras_does_not_reset_the_backoff(archive):
     resume(archive)
     queued = archive.client.post(f"/api/subscriptions/{sub['id']}/entries/{video}/download")
     archive.wait_job(queued.json()["job_id"])
-    assert 7190 < paused_for(archive.gate) <= 7200 and archive.gate.refusals == 2
+    assert archive.gate.refusals == 0  # the video came through, so the ladder starts over
+    assert 3590 < paused_for(archive.gate) <= 3600  # and the extra costs a fixed hour, not 2
 
 
 def test_refusals_that_arrive_together_count_once(archive, caplog):
@@ -245,7 +377,7 @@ def test_refusals_that_arrive_together_count_once(archive, caplog):
     results = archive.call(list_twice)
     assert all(isinstance(result, Blocked) for result in results)
     assert archive.gate.refusals == 1 and 3590 < paused_for(archive.gate) <= 3600
-    logged = [record for record in caplog.records if "asked for a bot check;" in record.message]
+    logged = [record for record in caplog.records if "YouTube refused a request;" in record.message]
     assert len(logged) == 1
 
 
@@ -256,7 +388,7 @@ def test_the_pause_and_the_backoff_survive_a_restart(archive):
     restarted = reloaded(archive)
     assert restarted.paused and restarted.resumes_at == gate.resumes_at
     assert abs(restarted.paused_until - gate.paused_until) < 1
-    assert (restarted.refusals, restarted.reason) == (1, BOT)
+    assert (restarted.refusals, restarted.cause, restarted.reason) == (1, "refused", BOT)
     with pytest.raises(Paused):
         archive.call(restarted.fetch_video, VIDEO)
 
@@ -279,7 +411,8 @@ def test_a_restart_during_a_pause_holds_the_jobs_it_brings_back(archive):
     archive.call(runner.start)
     job = archive.job(video["job_id"])
     assert job["status"] == "queued" and job["attempts"] == 0
-    assert job["run_after"] == archive.gate.resumes_at
+    assert (job["state"], job["waiting_on"]) == ("waiting", "youtube")
+    assert job["waits_until"] == archive.gate.resumes_at
 
 
 def test_lookups_wait_out_a_pause_without_asking_youtube(archive):
@@ -316,12 +449,13 @@ def test_the_owner_can_pause_all_youtube_work(archive):
     time.sleep(0.2)  # time enough for a worker to have taken the job
     assert downloads(archive) == []
     job = archive.job(video["job_id"])
-    assert job["status"] == "queued" and job["run_after"] == gate.resumes_at
+    assert job["status"] == "queued" and job["waits_until"] == gate.resumes_at
     response = archive.client.post("/api/videos/resolve", json={"url": LOOKUP})
     assert response.status_code == 503
 
     status = archive.client.get("/api/jobs").json()
     assert status["youtube_paused_until"] == gate.resumes_at
+    assert status["youtube_pause_cause"] == "asked"
     assert status["youtube_pause_reason"] is None and status["youtube_refusals"] == 0
     assert gate.refusals == 0  # the owner asked, so YouTube refused nothing
 
@@ -356,7 +490,7 @@ def test_a_job_retried_during_a_pause_waits_it_out(archive):
     pause(archive)
     assert archive.client.post(f"/api/jobs/{video['job_id']}/retry").status_code == 200
     job = archive.job(video["job_id"])
-    assert job["status"] == "queued" and job["run_after"] == archive.gate.resumes_at
+    assert job["status"] == "queued" and job["waits_until"] == archive.gate.resumes_at
 
 
 def test_the_api_says_why_youtube_is_paused(archive):
@@ -386,7 +520,7 @@ def test_a_refused_lookup_pauses_youtube_and_queued_downloads_wait(archive):
     assert gate.paused and 3590 < paused_for(gate) <= 3600
     for job_id in waiting:
         job = archive.job(job_id)
-        assert job["status"] == "queued" and job["run_after"] == gate.resumes_at
+        assert job["status"] == "queued" and job["waits_until"] == gate.resumes_at
     assert archive.job(running)["status"] == "running"
 
     archive.youtube.hold.clear()
@@ -413,10 +547,10 @@ def test_a_check_stops_at_its_next_call_once_youtube_is_paused(archive, monkeypa
 
     monkeypatch.setattr(archive.youtube, "list_entries", list_then_meet_a_bot_check_elsewhere)
     queued = archive.client.post(f"/api/subscriptions/{sub['id']}/check").json()
-    job = archive.wait(lambda: (job := archive.job(queued["job_id"]))["run_after"] and job)
+    job = archive.wait(lambda: (job := archive.job(queued["job_id"]))["state"] == "waiting" and job)
 
-    assert job["status"] == "queued" and job["run_after"] == gate.resumes_at
-    assert job["attempts"] == 0 and job["error"] == BOT
+    assert job["status"] == "queued" and job["waits_until"] == gate.resumes_at
+    assert job["attempts"] == 0 and job["waiting_on"] == "youtube"
     assert archive.client.get("/api/jobs").json()["counts"]["waiting"] == 1
     assert [call[2] for call in archive.youtube.calls if call[0] == "list"] == ["video"]
 
@@ -424,17 +558,17 @@ def test_a_check_stops_at_its_next_call_once_youtube_is_paused(archive, monkeypa
 def test_checks_wait_out_a_pause_but_scans_still_run(archive):
     sub = subscribe(archive)
     runner = archive.app.state.runner
-    archive.gate.paused_until = time.time() + 600
+    pause(archive, hours=0.2)
     queued = archive.client.post(f"/api/subscriptions/{sub['id']}/check").json()
     scan = archive.client.post("/api/library/rescan").json()
     archive.wait_job(scan["job_id"])
     job = archive.job(queued["job_id"])
-    assert job["status"] == "queued" and job["run_after"]
+    assert job["status"] == "queued" and job["state"] == "waiting"
     assert archive.call(runner.queue_due_checks) == 0
 
 
 def test_downloads_rest_between_one_another(archive, monkeypatch):
-    monkeypatch.setattr(jobs, "DOWNLOAD_REST", (1.0, 1.0))
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "download": (1.0, 1.0)})
     one_at_a_time(archive)
     for youtube_id in IDS[:2]:
         archive.youtube.add(youtube_id)
@@ -442,3 +576,115 @@ def test_downloads_rest_between_one_another(archive, monkeypatch):
     archive.wait_job(first["job_id"])
     assert archive.job(second["job_id"])["status"] == "queued"  # the worker is resting
     archive.wait_job(second["job_id"])
+
+
+def test_the_api_says_when_a_rest_ends(archive, monkeypatch):
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "download": (60.0, 60.0)})
+    archive.youtube.add(VIDEO)
+    assert archive.client.get("/api/jobs").json()["download_rest_until"] is None
+
+    archive.wait_job(add(archive)["job_id"])
+    ends = archive.client.get("/api/jobs").json()["download_rest_until"]
+    assert 55 < (parse_time(ends) - utcnow()).total_seconds() <= 62
+    assert archive.client.get("/api/system").json()["download_rest_until"] == ends
+
+
+def test_rest_holds_back_every_worker_not_only_the_one_that_ran(archive, monkeypatch):
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "download": (1.0, 1.0)})
+    assert (
+        archive.client.put("/api/settings", json={"max_concurrent_downloads": 2}).status_code == 200
+    )
+    archive.youtube.hold.set()  # the first download stays under way
+    for youtube_id in IDS[:2]:
+        archive.youtube.add(youtube_id)
+    before = time.monotonic()
+    first, second = (add(archive, youtube_id) for youtube_id in IDS[:2])
+    archive.wait_job(first["job_id"], "running")
+
+    time.sleep(0.4)  # the second worker is idle, but the rest since the first began isn't over
+    waiting = archive.job(second["job_id"])
+    assert (waiting["status"], waiting["state"], waiting["waiting_on"]) == (
+        "queued",
+        "queued",
+        None,
+    )
+
+    archive.wait_job(second["job_id"], "running")
+    assert time.monotonic() - before >= 1.0
+    archive.youtube.hold.clear()
+    for video in (first, second):
+        archive.wait_job(video["job_id"])
+
+
+def test_checks_rest_between_one_another(archive, monkeypatch):
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "check": (1.0, 1.0)})
+    before = time.monotonic()
+    for url in (CHANNEL_URL, PLAYLIST_URL):
+        assert archive.client.post("/api/subscriptions", json={"url": url}).status_code == 201
+    first, second = sorted(job["id"] for job in archive.jobs(kind="check"))
+    archive.wait_job(first)
+    assert archive.job(second)["status"] == "queued"  # resting, not running
+    archive.wait_job(second)
+    assert time.monotonic() - before >= 1.0
+
+
+def test_a_check_resting_does_not_hold_up_a_scan(archive, monkeypatch):
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "check": (60.0, 60.0)})
+    sub = subscribe(archive)
+    queued = archive.client.post(f"/api/subscriptions/{sub['id']}/check").json()
+    scan = archive.client.post("/api/library/rescan").json()
+    archive.wait_job(scan["job_id"])
+    assert archive.job(queued["job_id"])["state"] == "queued"
+
+
+def test_failures_that_say_what_is_wrong_do_not_count_toward_a_streak(archive):
+    wrong = [Unavailable("Private video"), Inaccessible("Join this channel to get access")]
+    failing = [f"specific{n:03d}" for n in range(pace.FAILURE_STREAK + 3)]
+    for number, youtube_id in enumerate(failing):
+        archive.youtube.add(youtube_id)
+        archive.youtube.download_failures[youtube_id] = wrong[number % 2]
+    upcoming = ["premiere001", "premiere002"]
+    for youtube_id in upcoming:
+        archive.youtube.add(youtube_id, live_status="is_upcoming")
+    queue_stopped(archive, [*failing, *upcoming])
+    archive.wait(lambda: len(downloads(archive)) == len(failing) + len(upcoming))
+    time.sleep(0.2)  # time enough for the worker to have moved on to another job
+    assert not archive.gate.paused and archive.gate.refusals == 0
+
+
+def test_the_rest_runs_from_when_a_download_finishes_not_only_from_when_it_began(
+    archive, monkeypatch
+):
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "download": (1.0, 1.0)})
+    one_at_a_time(archive)
+    for youtube_id in IDS[:2]:
+        archive.youtube.add(youtube_id)
+    archive.youtube.hold.set()
+    first, second = (add(archive, youtube_id) for youtube_id in IDS[:2])
+    archive.wait_job(first["job_id"], "running")
+    time.sleep(1.3)  # the first outlasts the rest that began with it
+    archive.youtube.hold.clear()
+    archive.wait_job(first["job_id"])
+    time.sleep(0.5)  # a rest counted from the start alone would be long over by now
+    assert archive.job(second["job_id"])["status"] == "queued"
+    archive.wait_job(second["job_id"])
+
+
+def test_workers_that_look_for_a_job_in_the_same_moment_cannot_both_start_one(archive, monkeypatch):
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "download": (60.0, 60.0)})
+    runner = archive.app.state.runner
+    archive.call(runner.stop)
+    assert (
+        archive.client.put("/api/settings", json={"max_concurrent_downloads": 3}).status_code == 200
+    )
+    for youtube_id in IDS:
+        archive.youtube.add(youtube_id)
+        add(archive, youtube_id)
+    archive.youtube.hold.set()
+    archive.call(runner.start)  # all three workers reach for a job together
+
+    archive.wait(lambda: archive.client.get("/api/jobs").json()["counts"]["running"])
+    time.sleep(0.5)  # long enough for the others to have started too, if they could
+    counts = archive.client.get("/api/jobs").json()["counts"]
+    assert (counts["running"], counts["queued"]) == (1, 2)
+    assert len(downloads(archive)) == 1

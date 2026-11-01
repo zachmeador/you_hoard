@@ -5,13 +5,17 @@ from typing import Any
 
 import aiosqlite
 
+from app import events
 from app.artwork import save_channel_art
 from app.db import dumps, fetch_all, fetch_one, loads, now
-from app.jobs import JobRunner
+from app.events import Actor
+from app.jobs import JobRunner, Priority, Reason
 from app.library import ensure_video, upsert_channel
 from app.youtube import NOT_READY, Cancelled, Source
 
 ROUTINE_STOP_AFTER_KNOWN = 10
+# The settings that decide which inventory entries the policy selects.
+SELECTION = ("content_types", "download_policy", "recent_count")
 
 
 async def refresh_channel(runner: JobRunner, channel_id: int, source: Source) -> None:
@@ -146,7 +150,7 @@ async def run_check(
         result["full"] = result["full"] or complete
 
     async with db.transaction() as conn:
-        result["queued"] = await apply_policy(runner, conn, sub["id"])
+        result["queued"] = await apply_policy(runner, conn, sub["id"], actor="app")
         await conn.execute(
             "UPDATE subscriptions SET last_checked_at = ? WHERE id = ?", (now(), sub["id"])
         )
@@ -164,25 +168,22 @@ async def entry_channel(
     return None
 
 
-async def apply_policy(runner: JobRunner, conn: aiosqlite.Connection, subscription_id: int) -> int:
-    """Queue downloads for inventory entries the policy selects and the library has never seen."""
+async def apply_policy(
+    runner: JobRunner, conn: aiosqlite.Connection, subscription_id: int, *, actor: Actor
+) -> int:
+    """Queue downloads for inventory entries the policy selects and the library has never seen.
+
+    The entry_selection view decides what the policy selects, including that a subscription that
+    is off selects nothing, so no caller needs to check.
+    """
     sub = await fetch_one(conn, "SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
-    policy = sub["download_policy"]
-    if policy == "none":
-        return 0
-    types = loads(sub["content_types"]) if sub["kind"] == "channel" else ["video", "short", "live"]
-    placeholders = ", ".join("?" for _ in types)
-    not_ready = ", ".join(f"'{status}'" for status in sorted(NOT_READY))
     entries = await fetch_all(
         conn,
-        f"""SELECT e.* FROM source_entries e
-            LEFT JOIN videos v ON v.youtube_id = e.youtube_id
-            WHERE e.subscription_id = ? AND e.removed_at IS NULL AND v.id IS NULL
-              AND coalesce(e.live_status, '') NOT IN ({not_ready})
-              AND e.video_type IN ({placeholders})
-              AND (? = 'all' OR e.baseline = 0 OR (? = 'recent' AND e.position < ?))
-            ORDER BY e.baseline, e.position""",
-        (subscription_id, *types, policy, policy, sub["recent_count"]),
+        """SELECT e.* FROM entry_selection e
+           LEFT JOIN videos v ON v.youtube_id = e.youtube_id
+           WHERE e.subscription_id = ? AND e.skip_reason IS NULL AND v.id IS NULL
+           ORDER BY e.baseline, e.position""",
+        (subscription_id,),
     )
     for entry in entries:
         video_id = await ensure_video(
@@ -194,23 +195,86 @@ async def apply_policy(runner: JobRunner, conn: aiosqlite.Connection, subscripti
             duration=entry["duration"],
         )
         await runner.enqueue(
-            "download", video_id=video_id, options={"subscription_id": sub["id"]}, conn=conn
+            "download",
+            video_id=video_id,
+            via_subscription_id=sub["id"],
+            origin="policy",
+            actor=actor,
+            conn=conn,
         )
     return len(entries)
 
 
-async def pause_policy_downloads(conn: aiosqlite.Connection, subscription_id: int) -> None:
-    """The subscription stopped downloading, so what its policy queued stops too. Paused, not
-    cancelled, so nothing is lost. Downloads asked for one by one have a priority, and stay."""
-    await conn.execute(
-        "UPDATE jobs SET status = 'paused' WHERE status = 'queued' AND kind = 'download' "
-        "AND priority <= 0 AND json_extract(options, '$.subscription_id') = ?",
-        (subscription_id,),
+def downloading(sub: dict[str, Any]) -> bool:
+    """Whether a subscription's policy is queueing downloads: it is on and wants some."""
+    return bool(sub["enabled"]) and sub["download_policy"] != "none"
+
+
+async def subscription_changed(
+    runner: JobRunner,
+    conn: aiosqlite.Connection,
+    before: dict[str, Any],
+    subscription_id: int,
+    *,
+    actor: Actor,
+) -> None:
+    """Bring a subscription's downloads in line with a change just saved, in the same transaction.
+
+    Switching it off, by disabling it or setting its policy to none, pauses the downloads its
+    policy queued; switching it back on resumes exactly those. Downloads asked for by hand, and
+    jobs the owner paused, are left alone either way. Off comes before anything is queued.
+    """
+    after = await fetch_one(conn, "SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
+    if downloading(before) and not downloading(after):
+        ids = await policy_downloads(conn, subscription_id, "queued")
+        paused = await runner.pause_many(
+            ids, actor=actor, reason=Reason.SUBSCRIPTION_OFF, conn=conn
+        )
+        detail = f"{paused} downloads paused"
+        await events.record(
+            conn, "subscription.off", actor=actor, subscription_id=subscription_id, detail=detail
+        )
+    elif downloading(after) and not downloading(before):
+        ids = await policy_downloads(conn, subscription_id, "paused", Reason.SUBSCRIPTION_OFF)
+        resumed = await runner.resume_many(ids, actor=actor, conn=conn)
+        detail = f"{resumed} downloads resumed"
+        await events.record(
+            conn, "subscription.on", actor=actor, subscription_id=subscription_id, detail=detail
+        )
+    if any(before[key] != after[key] for key in SELECTION):
+        await apply_policy(runner, conn, subscription_id, actor=actor)
+        added = set(loads(after["content_types"])) - set(loads(before["content_types"]))
+        if after["enabled"] and added:
+            await runner.enqueue(
+                "check",
+                subscription_id=subscription_id,
+                priority=Priority.ASKED,
+                origin="user",
+                actor=actor,
+                conn=conn,
+            )
+
+
+async def policy_downloads(
+    conn: aiosqlite.Connection, subscription_id: int, status: str, reason: Reason | None = None
+) -> list[int]:
+    """The ids of the downloads a subscription's policy queued that are in this status."""
+    rows = await fetch_all(
+        conn,
+        "SELECT id FROM jobs WHERE kind = 'download' AND origin = 'policy' "
+        "AND via_subscription_id = ? AND status = ? AND (? IS NULL OR reason = ?) ORDER BY id",
+        (subscription_id, status, reason, reason),
     )
+    return [row["id"] for row in rows]
 
 
 async def queue_entry_download(
-    runner: JobRunner, conn: aiosqlite.Connection, sub: dict[str, Any], entry: dict[str, Any]
+    runner: JobRunner,
+    conn: aiosqlite.Connection,
+    sub: dict[str, Any],
+    entry: dict[str, Any],
+    *,
+    actor: Actor,
 ) -> tuple[int, int]:
     """An explicit download of one inventory entry, regardless of policy."""
     channel_id = await entry_channel(conn, sub, entry)
@@ -229,8 +293,10 @@ async def queue_entry_download(
     job_id = await runner.enqueue(
         "download",
         video_id=video_id,
-        options={"subscription_id": sub["id"]},
-        priority=5,
+        via_subscription_id=sub["id"],
+        priority=Priority.ASKED,
+        origin="user",
+        actor=actor,
         conn=conn,
     )
     return video_id, job_id

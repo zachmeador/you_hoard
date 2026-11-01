@@ -16,10 +16,10 @@ from app.api.deps import (
     not_found,
 )
 from app.artwork import save_channel_art
-from app.checks import apply_policy, pause_policy_downloads, queue_entry_download
+from app.checks import queue_entry_download, subscription_changed
 from app.db import Database, dumps, fetch_one, later, loads, now
 from app.gate import YouTubeGate
-from app.jobs import JobRunner
+from app.jobs import JobRunner, Priority
 from app.library import upsert_channel
 from app.settings import Settings
 from app.youtube import (
@@ -300,7 +300,9 @@ async def create_subscription(
                 "check",
                 subscription_id=subscription_id,
                 options={"full": True},
-                priority=5,
+                priority=Priority.ASKED,
+                origin="user",
+                actor="owner",
                 conn=conn,
             )
     if channel_id:
@@ -331,30 +333,13 @@ async def update_subscription(
     if "check_interval_hours" in fields:
         values["next_check_at"] = later(hours=fields["check_interval_hours"])
     values["updated_at"] = now()
-    selection_changed = any(
-        key in fields and values[key] != current[key]
-        for key in ("content_types", "download_policy", "recent_count")
-    )
     async with db.transaction() as conn:
         assignments = ", ".join(f"{key} = ?" for key in values)
         await conn.execute(
             f"UPDATE subscriptions SET {assignments} WHERE id = ?",
             (*values.values(), subscription_id),
         )
-        enabled = fields.get("enabled", current["enabled"])
-        policy = fields.get("download_policy", current["download_policy"])
-        was_downloading = current["enabled"] and current["download_policy"] != "none"
-        if was_downloading and (not enabled or policy == "none"):
-            await pause_policy_downloads(conn, subscription_id)
-        if selection_changed:
-            await apply_policy(runner, conn, subscription_id)
-            types_added = "content_types" in fields and set(fields["content_types"]) - set(
-                loads(current["content_types"])
-            )
-            if enabled and types_added:
-                await runner.enqueue(
-                    "check", subscription_id=subscription_id, priority=5, conn=conn
-                )
+        await subscription_changed(runner, conn, current, subscription_id, actor="owner")
     return await subscription_response(db, subscription_id)
 
 
@@ -384,15 +369,18 @@ async def check_subscription(
         "check",
         subscription_id=subscription_id,
         options={"full": bool(body and body.full)},
-        priority=5,
+        priority=Priority.ASKED,
+        origin="user",
+        actor="owner",
     )
     return {"job_id": job_id}
 
 
 ENTRY_SELECT = """
 SELECT e.*, v.id AS video_id, coalesce(s.status, 'not_selected') AS status,
-       s.job_status, s.job_error, s.job_run_after, s.job_attempts
-FROM source_entries e
+       s.job_status, s.job_state, s.job_reason, s.job_waiting_on, s.job_waits_until,
+       s.job_error, s.job_attempts
+FROM entry_selection e
 LEFT JOIN videos v ON v.youtube_id = e.youtube_id
 LEFT JOIN video_status s ON s.video_id = v.id
 """
@@ -444,6 +432,8 @@ async def list_entries(
         {
             **{key: row[key] for key in keys},
             "channel_name": row["channel_name"] or own_channel,
+            # Why the policy skipped it matters only while the library hasn't picked it up.
+            "skip_reason": row["skip_reason"] if row["status"] == "not_selected" else None,
             "job": active_job(row),
         }
         for row in rows
@@ -469,5 +459,5 @@ async def download_entry(
             raise not_found("Entry")
         if entry["status"] == "archived":
             raise HTTPException(status_code=409, detail="This video is already archived")
-        video_id, job_id = await queue_entry_download(runner, conn, sub, entry)
+        video_id, job_id = await queue_entry_download(runner, conn, sub, entry, actor="owner")
     return {"job_id": job_id, "video_id": video_id}

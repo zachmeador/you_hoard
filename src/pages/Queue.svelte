@@ -1,10 +1,20 @@
 <script>
-  /** @import { Job, JobCounts, JobFilter, JobList, JobStatus } from '../lib/types' */
+  /** @import { Job, JobCounts, JobList, JobStateName, JobStatus } from '../lib/types' */
   import { untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { bytes, dur, hm, int, JOB_KINDS, rel, whenShort } from '../lib/format.js'
-  import { isPremiere, isRetry, jobResult, jobTook, looksGone, refusalWords, shortReason } from '../lib/jobs.js'
+  import {
+    canRetry,
+    failedNote,
+    jobResult,
+    jobTook,
+    PAUSE_TITLES,
+    pausedWhy,
+    refusalCount,
+    refusalWords,
+    waitingWhy
+  } from '../lib/jobs.js'
   import { jobItemTitle } from '../lib/format.js'
   import { Loader } from '../lib/loader.svelte.js'
   import { poll } from '../lib/poll.js'
@@ -28,7 +38,7 @@
   const RUNNING = 50
   /** @type {Section[]} */
   const SECTIONS = ['running', 'waiting', 'queued', 'paused', 'failed', 'history']
-  /** @type {Record<Section, JobFilter | JobFilter[]>} */
+  /** @type {Record<Section, JobStateName | JobStateName[]>} */
   const STATUS = {
     running: 'running',
     waiting: 'waiting',
@@ -100,6 +110,13 @@
   const pickTab = $derived(view === 'waiting' || view === 'queued' || view === 'paused' ? view : null)
   const downloads = $derived(queue.running.filter((j) => j.kind === 'download'))
   const slots = $derived(librarySettings.current?.max_concurrent_downloads ?? 2)
+  /** Downloads rest between one another; with every slot busy the rest isn't what holds the next one. */
+  const resting = $derived(
+    !!queue.downloadRestUntil &&
+      !queue.youtubePausedUntil &&
+      downloads.length < slots &&
+      items('queued').some((job) => job.kind === 'download')
+  )
   const combined = $derived(
     downloads.reduce((sum, j) => sum + (j.progress?.phase === 'downloading' ? (j.progress.speed ?? 0) : 0), 0)
   )
@@ -177,12 +194,8 @@
       picked.delete(job.id)
     })
 
-  /** A waiting job runs again straight away: cancelling and retrying clears its wait. @param {Job} job */
-  const runNow = (job) =>
-    act(async () => {
-      await api.jobs.act(job.id, 'cancel')
-      await api.jobs.act(job.id, 'retry')
-    })
+  /** A queued job goes to the front of the queue, skipping its own wait. @param {Job} job */
+  const runNow = (job) => act(() => api.jobs.act(job.id, 'run-now'))
 
   /** @param {Job} job */
   const removeJob = (job) => act(() => api.jobs.remove(job.id))
@@ -309,8 +322,21 @@
   <div class="sec-h">
     <h2 class="label">{title}</h2>
     {#if view && items(section).length && pagesOf(section) > 1}<span class="n">{rangeOf(section)}</span>{/if}
+    {#if section === 'queued' && resting}<span class="n">Next download {rel(queue.downloadRestUntil, clock.now)}</span>{/if}
   </div>
 {/snippet}
+
+{#snippet historyIcon(/** @type {Job} */ job, /** @type {string} */ title)}
+  <a class="btn sm quiet history-btn" href={href('/activity', { job: job.id })} aria-label="History of {title}" title="History">
+    <Icon name="activity" />
+  </a>
+{/snippet}
+
+{#snippet historyLink(/** @type {Job} */ job)}
+  <a class="lnk" href={href('/activity', { job: job.id })}>History</a>
+{/snippet}
+
+{#snippet until()}Downloads, checks and lookups wait until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}){/snippet}
 
 {#snippet foot(/** @type {Section} */ section)}
   {#if view}
@@ -390,17 +416,22 @@
 </div>
 
 {#if queue.youtubePausedUntil}
+  {@const cause = queue.youtubePauseCause ?? 'asked'}
   <div class="callout qpause">
     <Icon name="clock" class="mk" />
     <div>
-      {#if queue.youtubePauseReason}
-        <span class="ttl2">YouTube refused a request</span>
-        <q>{refusalWords(queue.youtubePauseReason)}</q>
-        Downloads, checks and lookups wait until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}),
-        instead of each one running into it. The wait grows if YouTube keeps refusing.
+      <span class="ttl2">{PAUSE_TITLES[cause]}</span>
+      {#if cause !== 'asked' && queue.youtubePauseReason}
+        <q>{cause === 'failures' ? queue.youtubePauseReason : refusalWords(queue.youtubePauseReason)}</q>
+      {/if}
+      {#if cause === 'refused'}
+        {@render until()}, instead of each one running into it. The wait grows if YouTube keeps refusing.
+      {:else if cause === 'extras'}
+        The video came through. {@render until()}, so the next ones don't lose theirs too.
+      {:else if cause === 'failures'}
+        {@render until()}, in case the connection is the trouble.
       {:else}
-        <span class="ttl2">YouTube work is paused</span>
-        Downloads, checks and lookups wait until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}), as you asked.
+        {@render until()}, as you asked.
       {/if}
       <div class="acts">
         <button type="button" class="btn" onclick={resumeYoutube}>Resume now</button>
@@ -470,24 +501,17 @@
           {@const link = itemLink(job)}
           <tr class:picked={picked.has(job.id)}>
             <td class="c-pick keep">{@render pick(job, title)}</td>
-            <td class="c-when wt"><b>{whenShort(job.run_after, clock.now)}</b><span>{rel(job.run_after, clock.now)}</span></td>
+            <td class="c-when wt"><b>{whenShort(job.waits_until, clock.now)}</b><span>{rel(job.waits_until, clock.now)}</span></td>
             <td class="c-main keep">
               {#if link}<a class="ttl" href={link}>{title}</a>{:else}<span class="ttl">{title}</span>{/if}
-              <div class="why">
-                {#if isRetry(job)}
-                  Attempt {job.attempts + 1} of 4 after <span class="e">{shortReason(job.error ?? '')}</span>
-                {:else if isPremiere(job)}
-                  Premiere
-                {:else}
-                  {refusalWords(job.error ?? '')}
-                {/if}
-              </div>
-              <div class="m-meta">Until {whenShort(job.run_after, clock.now)} ({rel(job.run_after, clock.now)})</div>
+              <div class="why">{waitingWhy(job)}</div>
+              <div class="m-meta">Until {whenShort(job.waits_until, clock.now)} ({rel(job.waits_until, clock.now)}) · {@render historyLink(job)}</div>
             </td>
             <td class="c-act c-side keep">
               {#if !queue.youtubePausedUntil}
                 <button type="button" class="btn sm quiet" aria-label="Run now: {title}" onclick={() => runNow(job)}>Run now</button>
               {/if}
+              {@render historyIcon(job, title)}
               <button type="button" class="btn sm quiet" aria-label="Cancel {title}" onclick={() => jobAction(job, 'cancel')}>
                 <Icon name="x" />
               </button>
@@ -524,13 +548,18 @@
             <td class="c-pos num">{startOf('queued') + i + 1}</td>
             <td class="c-main keep">
               {#if link}<a class="ttl" href={link}>{title}</a>{:else}<span class="ttl">{title}</span>{/if}
-              <div class="m-meta">{JOB_KINDS[job.kind]} · added {rel(job.created_at, clock.now)}</div>
+              {#if job.refusals > 0}<div class="why">{refusalCount(job.refusals)}, so it waits behind the others</div>{/if}
+              <div class="m-meta">{JOB_KINDS[job.kind]} · added {rel(job.created_at, clock.now)} · {@render historyLink(job)}</div>
             </td>
             <td class="num c-added">{rel(job.created_at, clock.now)}</td>
             <td class="c-act c-side keep">
+              {#if job.refusals > 0 && !queue.youtubePausedUntil}
+                <button type="button" class="btn sm quiet" aria-label="Run now: {title}" onclick={() => runNow(job)}>Run now</button>
+              {/if}
               <button type="button" class="btn sm quiet" aria-label="Pause {title}" onclick={() => jobAction(job, 'pause')}>
                 <Icon name="pause" />
               </button>
+              {@render historyIcon(job, title)}
               <button type="button" class="btn sm quiet" aria-label="Cancel {title}" onclick={() => jobAction(job, 'cancel')}>
                 <Icon name="x" />
               </button>
@@ -565,13 +594,20 @@
             <td class="c-pick keep">{@render pick(job, title)}</td>
             <td class="c-main keep">
               {#if link}<a class="ttl" href={link}>{title}</a>{:else}<span class="ttl">{title}</span>{/if}
-              <div class="m-meta">{JOB_KINDS[job.kind]} · added {rel(job.created_at, clock.now)}</div>
+              <div class="why">
+                {pausedWhy(job)}
+                {#if job.reason === 'subscription_off' && job.via_subscription}
+                  · <a class="lnk" href={href(`/subscriptions/${job.via_subscription.id}`)}>{job.via_subscription.title}</a>
+                {/if}
+              </div>
+              <div class="m-meta">{JOB_KINDS[job.kind]} · added {rel(job.created_at, clock.now)} · {@render historyLink(job)}</div>
             </td>
             <td class="num c-added">{rel(job.created_at, clock.now)}</td>
             <td class="c-act c-side keep">
               <button type="button" class="btn sm" aria-label="Resume {title}" onclick={() => jobAction(job, 'resume')}>
                 <Icon name="play" />Resume
               </button>
+              {@render historyIcon(job, title)}
               <button type="button" class="btn sm quiet" aria-label="Cancel {title}" onclick={() => jobAction(job, 'cancel')}>
                 <Icon name="x" />
               </button>
@@ -603,25 +639,26 @@
         {#each items('failed') as job (job.id)}
           {@const title = jobItemTitle(job)}
           {@const link = itemLink(job)}
-          {@const gone = job.kind === 'download' && looksGone(job.error)}
+          {@const note = failedNote(job)}
           <tr>
             <td class="c-kind"><span class="kindtag">{JOB_KINDS[job.kind]}</span></td>
             <td class="c-main keep">
               {#if link}<a class="ttl" href={link}>{title}</a>{:else}<span class="ttl">{title}</span>{/if}
               {#if job.error}<div class="row-err" style="white-space: normal">{job.error}</div>{/if}
-              {#if gone}<div class="row-note">Gone from YouTube · not retried</div>{/if}
+              {#if note}<div class="row-note">{note}</div>{/if}
               <div class="m-meta">
-                {JOB_KINDS[job.kind]} · {job.attempts} {job.attempts === 1 ? 'try' : 'tries'} · {rel(job.finished_at, clock.now)}
+                {JOB_KINDS[job.kind]} · {job.attempts} {job.attempts === 1 ? 'try' : 'tries'} · {rel(job.finished_at, clock.now)} · {@render historyLink(job)}
               </div>
             </td>
             <td class="num c-tries">{job.attempts}</td>
             <td class="num c-fin">{rel(job.finished_at, clock.now)}</td>
             <td class="c-act c-side keep">
-              {#if !gone}
+              {#if canRetry(job)}
                 <button type="button" class="btn sm" aria-label="Retry {title}" onclick={() => jobAction(job, 'retry')}>
                   <Icon name="retry" />Retry
                 </button>
               {/if}
+              {@render historyIcon(job, title)}
               <button type="button" class="btn sm quiet" aria-label="Remove {title}" onclick={() => removeJob(job)}>
                 <Icon name="x" />
               </button>
@@ -647,6 +684,7 @@
           <th>Item</th>
           <th class="c-res">Result</th>
           <th class="num c-took">Took</th>
+          <th class="c-hist"><span class="sr">History</span></th>
         </tr>
       </thead>
       <tbody>
@@ -658,14 +696,8 @@
             <td class="c-when"><b>{hm(job.finished_at)}</b><span>{rel(job.finished_at, clock.now)}</span></td>
             <td class="c-kind"><span class="kindtag">{JOB_KINDS[job.kind]}</span></td>
             <td class="c-main keep">
-              {#if job.kind === 'scan'}
-                <span class="ttl">Library rescan</span>
-              {:else if link}
-                <a class="ttl" href={link}>{title}</a>
-              {:else}
-                <span class="ttl">{title}</span>
-              {/if}
-              <div class="m-meta">{hm(job.finished_at)} · {JOB_KINDS[job.kind]} · {jobResult(job)}</div>
+              {#if link}<a class="ttl" href={link}>{title}</a>{:else}<span class="ttl">{title}</span>{/if}
+              <div class="m-meta">{hm(job.finished_at)} · {JOB_KINDS[job.kind]} · {jobResult(job)} · {@render historyLink(job)}</div>
             </td>
             <td class="c-res">
               {#if job.status === 'cancelled'}
@@ -677,6 +709,7 @@
               {/if}
             </td>
             <td class="num c-took">{took != null ? dur(took) : '—'}</td>
+            <td class="c-hist">{@render historyIcon(job, title)}</td>
           </tr>
         {/each}
       </tbody>

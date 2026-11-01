@@ -94,7 +94,8 @@ export function whenShort(value, now = Date.now()) {
 export function rel(value, now = Date.now()) {
   const d = parseTime(value)
   if (!d) return DASH
-  let s = Math.round((d.getTime() - now) / 1000)
+  // `now` is usually the page clock, which can lag what just happened by a few seconds
+  let s = Math.round((d.getTime() - Math.max(now, Date.now())) / 1000)
   const future = s > 0
   s = Math.abs(s)
   let out
@@ -185,6 +186,16 @@ export function interval(hours) {
   if (hours % 168 === 0) return `Every ${hours / 168} weeks`
   if (hours % 24 === 0) return `Every ${hours / 24} days`
   return `Every ${hours} hours`
+}
+
+/**
+ * A range of seconds in whole minutes when it is one, else in seconds: "2–4 minutes", "20–40 seconds".
+ * @param {[number, number]} range
+ */
+export function secondsRange([low, high]) {
+  const minutes = low >= 60 && low % 60 === 0 && high % 60 === 0
+  const [from, to] = minutes ? [low / 60, high / 60] : [low, high]
+  return `${from === to ? from : `${from}–${to}`} ${minutes ? 'minute' : 'second'}${to === 1 ? '' : 's'}`
 }
 
 /** @param {string | null | undefined} quality */
@@ -374,5 +385,5 @@ export function textParts(text, limit = null) {
 export function jobItemTitle(job) {
   if (job.video) return job.video.title
   if (job.subscription) return job.subscription.title
-  return `Job #${job.id}`
+  return 'Library rescan'
 }

@@ -12,8 +12,8 @@ import aiosqlite
 from app import layout
 from app.artwork import AVATAR_FILE, BANNER_FILE
 from app.config import config
-from app.db import Database, fetch_one, from_timestamp, loads
-from app.jobs import JobRunner, Refused
+from app.db import Database, fetch_one, from_timestamp, loads, now
+from app.jobs import Declined, JobRunner
 from app.library import archive_facts, ensure_video, record_archived, save_video_info
 from app.youtube import Cancelled
 
@@ -83,7 +83,7 @@ async def run_scan(
     missing = sum(1 for video in archived if video["youtube_id"] not in found)
     if missing > max(MISSING_LIMIT, len(archived) // 2) and not force:
         # An unmounted or mistyped media folder looks like a library whose files all vanished.
-        raise Refused(
+        raise Declined(
             f"Rescan stopped: {missing:,} of {len(archived):,} archived videos aren't in the "
             f"media folder ({root}). Nothing was changed. If the folder is right and those files "
             "really are gone, rescan anyway."
@@ -103,15 +103,17 @@ async def run_scan(
                     linked.add(video["youtube_id"])
                 elif path is not None:
                     await conn.execute(
-                        "UPDATE videos SET media_path = ?, media_size = ? WHERE id = ?",
+                        "UPDATE videos SET media_path = ?, media_size = ?, lost_at = NULL "
+                        "WHERE id = ?",
                         (layout.relative(path), path.stat().st_size, video["id"]),
                     )
                     linked.add(video["youtube_id"])
                     result["relinked"] += 1
                 else:
                     await conn.execute(
-                        "UPDATE videos SET media_path = NULL, media_size = NULL WHERE id = ?",
-                        (video["id"],),
+                        "UPDATE videos SET media_path = NULL, media_size = NULL, lost_at = ? "
+                        "WHERE id = ?",
+                        (now(), video["id"]),
                     )
                     result["missing"] += 1
 

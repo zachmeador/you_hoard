@@ -290,3 +290,6 @@
 .trash-line {
   margin-top: 12px;
 }
+.p + .kv {
+  margin-top: 12px;
+}

@@ -17,7 +17,7 @@
     percent,
     SUBTITLE_SOURCES
   } from '../lib/format.js'
-  import { isRetry } from '../lib/jobs.js'
+  import { hintFor, refusalWords } from '../lib/jobs.js'
   import { Loader } from '../lib/loader.svelte.js'
   import { queue } from '../lib/queue.svelte.js'
   import { href } from '../lib/router.svelte.js'
@@ -61,7 +61,7 @@
   const video = $derived(detail.data)
   const live = $derived(video ? queue.jobFor(video.id) : undefined)
   const job = $derived(video?.job ?? null)
-  const phase = $derived(video ? videoState(video, live, clock.now) : null)
+  const phase = $derived(video ? videoState(video, live) : null)
   const archived = $derived(video?.status === 'archived')
   const channelId = $derived(video?.channel?.id ?? null)
   const hasComments = $derived(!!video?.comments && video.comments.saved > 0)
@@ -70,6 +70,8 @@
     !!video && (video.status === 'downloading' || video.status === 'queued') && video.job_id != null
   )
   const progress = $derived(live?.progress ?? null)
+  /** What might fix a failed download, or a video YouTube keeps refusing. */
+  const hint = $derived(hintFor(video?.status === 'failed' ? video.error_reason : job?.reason))
 
   $effect(() => {
     void ui.videosVersion
@@ -195,13 +197,6 @@
       channelsChanged()
     })
   }
-
-  /** @param {string} error */
-  function hintFor(error) {
-    if (/bot|429/i.test(error)) return 'If bot checks keep coming back, load browser cookies with YTDLP_COOKIE_FILE.'
-    if (/members/i.test(error)) return 'Needs cookies from an account with this membership.'
-    return ''
-  }
 </script>
 
 <svelte:head>
@@ -249,6 +244,7 @@
           {:else if phase.key === 'queued' || phase.key === 'paused' || phase.key === 'missing'}
             <div class="pov">
               <span class="what">{{ queued: 'Queued', paused: 'Paused', missing: 'Not downloaded' }[phase.key]}</span>
+              {#if phase.why}<span class="info">{phase.why}</span>{/if}
             </div>
           {/if}
         </div>
@@ -298,9 +294,7 @@
           <div>
             <span class="ttl2">{video.unavailable ? 'Gone from YouTube before it was downloaded' : 'Download failed'}</span>
             {#if video.error}<q>{video.error}</q>{/if}
-            {#if video.error && !video.unavailable && hintFor(video.error)}
-              <div class="note">{hintFor(video.error)}</div>
-            {/if}
+            {#if hint && !video.unavailable}<div class="note">{hint}</div>{/if}
             {#if !video.unavailable}
               <div class="acts"><DownloadControls label="Retry" icon="retry" busy={busy === 'download'} onrun={download} /></div>
             {/if}
@@ -326,11 +320,32 @@
           <Icon name="clock" class="mk" />
           <div>
             <span class="ttl2">
-              {#if phase.premiere}Premieres {whenShort(job.run_after, clock.now)}
-              {:else if isRetry(job)}Next attempt {whenShort(job.run_after, clock.now)} ({rel(job.run_after, clock.now)})
-              {:else}Waiting until {whenShort(job.run_after, clock.now)} ({rel(job.run_after, clock.now)}){/if}
+              {#if job.waiting_on === 'premiere'}Premieres {whenShort(job.waits_until, clock.now)}
+              {:else if job.waiting_on === 'retry'}Next attempt {whenShort(job.waits_until, clock.now)} ({rel(job.waits_until, clock.now)})
+              {:else}Waiting until {whenShort(job.waits_until, clock.now)} ({rel(job.waits_until, clock.now)}){/if}
             </span>
             {#if phase.why}{phase.why}{/if}
+            {#if hint}<div class="note">{hint}</div>{/if}
+          </div>
+        </div>
+      {:else if phase.key === 'queued' && job?.reason === 'refused'}
+        <div class="callout">
+          <Icon name="clock" class="mk" />
+          <div>
+            <span class="ttl2">YouTube refused this download</span>
+            {#if job.error}<q>{refusalWords(job.error)}</q>{/if}
+            It waits behind the other downloads and tries again.
+            <div class="note">{hint}</div>
+          </div>
+        </div>
+      {/if}
+
+      {#if video.lost_at}
+        <div class="callout">
+          <span class="st deleted mk" aria-hidden="true"></span>
+          <div>
+            <span class="ttl2">The file went missing in a rescan on {dmy(video.lost_at)}</span>
+            A later rescan links it again if the file comes back.
           </div>
         </div>
       {/if}
@@ -354,6 +369,7 @@
         <a class="btn quiet" href={video.youtube_url} target="_blank" rel="noopener noreferrer">
           <Icon name="ext" />Open on YouTube
         </a>
+        <a class="btn quiet" href={href('/activity', { video: video.id })}><Icon name="activity" />Activity</a>
         <span class="grow"></span>
         {#if archived}
           <button type="button" class="btn danger" disabled={busy === 'remove'} onclick={removeFiles}>

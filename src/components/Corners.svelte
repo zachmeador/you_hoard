@@ -3,13 +3,12 @@
   import { dur, hm, percent, qualityWithRate } from '../lib/format.js'
   import { queue } from '../lib/queue.svelte.js'
   import { videoState } from '../lib/status.js'
-  import { clock } from '../lib/ui.svelte.js'
   import Icon from './Icon.svelte'
 
   /** @type {{ video: Video, quality?: boolean }} */
   let { video, quality = true } = $props()
 
-  const phase = $derived(videoState(video, queue.jobFor(video.id), clock.now))
+  const phase = $derived(videoState(video, queue.jobFor(video.id)))
   const gone = $derived(video.unavailable)
 </script>
 
@@ -19,7 +18,7 @@
   </span>
 {:else if phase.key === 'waiting'}
   <span class="cn tl wait">
-    <Icon name="clock" />{phase.premiere ? 'Premieres' : 'Waiting'} {hm(phase.runAfter)}
+    <Icon name="clock" />{phase.premiere ? 'Premieres' : 'Waiting'} {hm(phase.waitsUntil)}
   </span>
 {:else if phase.key === 'queued'}
   <span class="cn tl">Queued</span>

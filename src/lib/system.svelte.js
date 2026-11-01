@@ -1,5 +1,6 @@
 /** @import { SystemInfo } from './types' */
 import { api } from './api.js'
+import { PAUSE_TITLES } from './jobs.js'
 
 const LOW_DISK = 0.1
 
@@ -17,7 +18,8 @@ class SystemState {
     if (!info.ffmpeg) list.push('ffmpeg is missing')
     if (!info.js_runtime) list.push('No JavaScript runtime for yt-dlp')
     if (info.cookies === 'unreadable') list.push("The cookies file can't be read")
-    if (info.youtube_pause_reason) list.push('YouTube refused a request; downloads and checks are waiting')
+    const cause = info.youtube_pause_cause
+    if (cause && cause !== 'asked') list.push(`${PAUSE_TITLES[cause]}; downloads and checks are waiting`)
     return list
   })
 

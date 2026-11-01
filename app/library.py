@@ -20,7 +20,8 @@ AVAILABILITIES = {
 }
 
 VIDEO_SELECT = """
-SELECT v.*, s.status, s.job_id, s.job_status, s.job_error, s.job_run_after, s.job_attempts,
+SELECT v.*, s.status, s.job_id, s.job_status, s.job_state, s.job_reason, s.job_waiting_on,
+       s.job_waits_until, s.job_error, s.job_attempts,
        c.youtube_id AS channel_youtube_id, c.name AS channel_name
 FROM videos v
 JOIN video_status s ON s.video_id = v.id
@@ -240,7 +241,8 @@ async def record_archived(
     await conn.execute(
         """UPDATE videos SET media_path = ?, media_size = ?, width = ?, height = ?,
                fps = ?, vcodec = ?, acodec = ?, dynamic_range = ?, audio_languages = ?,
-               subtitle_tracks = ?, archived_at = ?, deleted_at = NULL, updated_at = ?
+               subtitle_tracks = ?, archived_at = ?, deleted_at = NULL, lost_at = NULL,
+               updated_at = ?
            WHERE id = ?""",
         (
             media_path,

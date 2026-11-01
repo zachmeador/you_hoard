@@ -23,7 +23,7 @@ from app.api.deps import (
 )
 from app.db import Database, from_timestamp, loads, now
 from app.gate import YouTubeGate
-from app.jobs import JobRunner
+from app.jobs import JobRunner, Priority
 from app.languages import language_name
 from app.library import VIDEO_SELECT, archive_facts, published_at, record_archived, save_video_info
 from app.settings import Settings
@@ -328,7 +328,15 @@ async def add_video(
             )
             video_id = cursor.lastrowid
         await conn.execute("UPDATE videos SET deleted_at = NULL WHERE id = ?", (video_id,))
-        await runner.enqueue("download", video_id=video_id, options=options, priority=10, conn=conn)
+        await runner.enqueue(
+            "download",
+            video_id=video_id,
+            options=options,
+            priority=Priority.URGENT,
+            origin="user",
+            actor="owner",
+            conn=conn,
+        )
     return video_out(await load_video(db, video_id))
 
 
@@ -346,7 +354,13 @@ async def download_video(
     async with db.transaction() as conn:
         await conn.execute("UPDATE videos SET deleted_at = NULL WHERE id = ?", (video_id,))
         job_id = await runner.enqueue(
-            "download", video_id=video_id, options=options, priority=10, conn=conn
+            "download",
+            video_id=video_id,
+            options=options,
+            priority=Priority.URGENT,
+            origin="user",
+            actor="owner",
+            conn=conn,
         )
     return {"job_id": job_id}
 

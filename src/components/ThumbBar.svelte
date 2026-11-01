@@ -2,12 +2,11 @@
   /** @import { Video } from '../lib/types' */
   import { queue } from '../lib/queue.svelte.js'
   import { videoState } from '../lib/status.js'
-  import { clock } from '../lib/ui.svelte.js'
 
   /** @type {{ video: Video }} */
   let { video } = $props()
 
-  const phase = $derived(videoState(video, queue.jobFor(video.id), clock.now))
+  const phase = $derived(videoState(video, queue.jobFor(video.id)))
 </script>
 
 {#if phase.key === 'downloading'}

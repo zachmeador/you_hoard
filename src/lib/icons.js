@@ -6,6 +6,7 @@ export const ICONS = {
   shelf: '<path d="M2.5 2.5v11M5.5 2.5v11M8.5 4.5v9M10.6 4.6l2.9 8.6M1.5 13.5h13"/>',
   feed: `<circle cx="3.5" cy="12.5" r="1" ${SOLID}/><path d="M2.5 7.5a6 6 0 0 1 6 6M2.5 2.5a11 11 0 0 1 11 11"/>`,
   queue: '<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M2.5 13.5h11"/>',
+  activity: '<path d="M1.5 8.5h3l2-5.5 3 10 2-4.5h3"/>',
   sliders: `<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.6" ${KNOB}/><circle cx="5.5" cy="8" r="1.6" ${KNOB}/><circle cx="9" cy="11.5" r="1.6" ${KNOB}/>`,
   search: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',

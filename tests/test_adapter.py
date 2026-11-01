@@ -2,18 +2,20 @@
 
 import asyncio
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from yt_dlp.utils import DownloadError
 
-from app import youtube
+from app import pace, youtube
 from app.tracks import AUTO, TRANSLATED, UPLOADED, Track, extra_audio, fits_mp4
 from app.youtube import (
     DownloadRequest,
+    Paused,
     YouTube,
     _channel_source,
     _entry,
@@ -229,7 +231,7 @@ def test_images_come_over_https_within_limits(monkeypatch):
 @pytest.fixture
 def captions(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """A local stand-in for YouTube's captions: "/ok" serves one and "/limited" answers 429."""
-    monkeypatch.setattr(youtube, "SUBTITLE_SLEEP", 0)
+    monkeypatch.setattr(pace, "SUBTITLE_SLEEP", 0)
     body = b"WEBVTT\n\n00:00.000 --> 00:01.000\nHi\n"
 
     class Captions(BaseHTTPRequestHandler):
@@ -330,3 +332,100 @@ def test_a_cookie_file_that_is_not_netscape_format_is_unreadable(tmp_path):
 def test_no_cookie_file_is_no_cookies(tmp_path):
     assert cookie_state(None) == "none"
     assert cookie_state(tmp_path / "missing.txt") == "none"
+
+
+class Scripted:
+    """Stands in for yt_dlp.YoutubeDL; what extract_info answers is set by each test."""
+
+    calls: list[str] = []
+    answer: Callable[[str], Any]
+
+    def __init__(self, params: dict[str, Any]) -> None:
+        self.params = params
+
+    def __enter__(self) -> "Scripted":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def extract_info(self, url: str, download: bool = False, process: bool = True) -> Any:
+        Scripted.calls.append(url)
+        return Scripted.answer(url)
+
+    def sanitize_info(self, info: dict[str, Any]) -> dict[str, Any]:
+        return info
+
+
+@pytest.fixture
+def scripted(monkeypatch: pytest.MonkeyPatch) -> type[Scripted]:
+    Scripted.calls = []
+    monkeypatch.setattr(youtube.yt_dlp, "YoutubeDL", Scripted)
+    return Scripted
+
+
+def refuse_while(paused: threading.Event) -> Callable[[], None]:
+    """A before_call that raises Paused once the flag is set, as the gate's does."""
+
+    def before_call() -> None:
+        if paused.is_set():
+            raise Paused("2999-01-01T00:00:00Z")
+
+    return before_call
+
+
+def test_a_pause_stops_a_metadata_call_before_its_retry(scripted, monkeypatch):
+    paused = threading.Event()
+
+    def fail(url: str) -> dict[str, Any]:
+        raise DownloadError("ERROR: HTTP Error 503: Service Unavailable")
+
+    async def pause_while_waiting_to_retry(seconds: float) -> None:
+        paused.set()
+
+    scripted.answer = fail
+    monkeypatch.setattr(youtube.asyncio, "sleep", pause_while_waiting_to_retry)
+    adapter = YouTube(request_interval=0)
+    adapter.before_call = refuse_while(paused)
+    with pytest.raises(Paused):
+        asyncio.run(adapter.fetch_video("dQw4w9WgXcQ"))
+    assert len(scripted.calls) == 1  # the retry never reached YouTube
+
+
+def test_a_pause_stops_calls_that_were_waiting_for_their_turn(scripted):
+    paused = threading.Event()
+    scripted.answer = lambda url: {"id": url}
+    adapter = YouTube(request_interval=0.3)
+    adapter.before_call = refuse_while(paused)
+
+    async def three_calls() -> list[Any]:
+        first = asyncio.create_task(adapter.fetch_video("first"))
+        await asyncio.sleep(0.05)
+        waiting = [asyncio.create_task(adapter.fetch_video(name)) for name in ("second", "third")]
+        await asyncio.sleep(0.05)
+        paused.set()
+        return await asyncio.gather(first, *waiting, return_exceptions=True)
+
+    first, *waiting = asyncio.run(three_calls())
+    assert first["id"].endswith("first")
+    assert all(isinstance(result, Paused) for result in waiting)
+    assert len(scripted.calls) == 1
+
+
+def test_a_pause_stops_a_listing_partway(scripted):
+    paused = threading.Event()
+    pulled: list[int] = []
+
+    def entries():
+        for n in range(10):
+            if n == 3:
+                paused.set()
+            pulled.append(n)
+            yield {"id": f"vid{n:08d}", "title": f"Video {n}"}
+
+    scripted.answer = lambda url: {"entries": entries()}
+    adapter = YouTube(request_interval=0)
+    adapter.before_call = refuse_while(paused)
+    with pytest.raises(Paused):
+        asyncio.run(adapter.list_entries("playlist", "PLfixture0000000000000000000000001", None))
+    assert pulled == [0, 1, 2, 3]  # the rest of the listing was never asked for

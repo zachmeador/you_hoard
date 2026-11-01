@@ -8,7 +8,7 @@
   /** @type {{ status: VideoStatus, videoId?: number | null, job?: JobState | null, bar?: boolean }} */
   let { status, videoId = null, job = null, bar = false } = $props()
 
-  const phase = $derived(videoState({ status, job }, videoId == null ? undefined : queue.jobFor(videoId), clock.now))
+  const phase = $derived(videoState({ status, job }, videoId == null ? undefined : queue.jobFor(videoId)))
 </script>
 
 {#if phase.key === 'archived'}
@@ -20,12 +20,12 @@
   {/if}
 {:else if phase.key === 'waiting'}
   <span class="st waiting" title={phase.why || undefined}>
-    {phase.premiere ? 'Premieres' : 'Waiting'} · {whenShort(phase.runAfter, clock.now)}
+    {phase.premiere ? 'Premieres' : 'Waiting'} · {whenShort(phase.waitsUntil, clock.now)}
   </span>
 {:else if phase.key === 'queued'}
   <span class="st queued">Queued</span>
 {:else if phase.key === 'paused'}
-  <span class="st paused">Paused</span>
+  <span class="st paused" title={phase.why || undefined}>Paused</span>
 {:else if phase.key === 'failed'}
   <span class="st failed">Failed</span>
 {:else if phase.key === 'deleted'}

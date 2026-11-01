@@ -2,6 +2,7 @@
   /** @import { Entry, SubscriptionKind } from '../lib/types' */
   import { compact, dmy, dur, isoDate, KIND_WORDS } from '../lib/format.js'
   import { lostEntry } from '../lib/entries.js'
+  import { skipWhy } from '../lib/jobs.js'
   import { href } from '../lib/router.svelte.js'
   import EntryStatus from './EntryStatus.svelte'
   import Icon from './Icon.svelte'
@@ -53,6 +54,8 @@
             <div class="row-note"><i class="lz g" aria-hidden="true"></i> Removed from source {dmy(entry.removed_at)} · archived</div>
           {:else if lost}
             <div class="row-note">Removed from source {dmy(entry.removed_at)}</div>
+          {:else if entry.status === 'not_selected' && skipWhy(entry)}
+            <div class="row-note">{skipWhy(entry)}</div>
           {/if}
           <div class="m-meta">
             #{entry.position} · {typeWord(entry)}{entry.duration ? ` · ${dur(entry.duration)}` : ''} · seen {isoDate(entry.first_seen_at)}<br />

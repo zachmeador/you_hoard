@@ -207,9 +207,13 @@
   font-size: var(--fs-sm);
 }
 .q .c-act {
-  width: 160px;
+  width: 216px;
   text-align: right;
   white-space: nowrap;
+}
+.q .c-hist {
+  width: 44px;
+  text-align: right;
 }
 .q .c-act .btn + .btn {
   margin-left: 4px;
@@ -221,9 +225,7 @@
   margin-top: 3px;
   font-size: var(--fs-sm);
   color: var(--ink-3);
-}
-.why .e {
-  color: var(--fail);
+  overflow-wrap: anywhere;
 }
 .nothing {
   padding: 10px 0;

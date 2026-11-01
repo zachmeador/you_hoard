@@ -44,6 +44,8 @@ export interface Video {
   job_id: number | null
   job: JobState | null
   error: string | null
+  /** Why the download failed, while the video's status is `failed`. */
+  error_reason: Reason | null
   unavailable: boolean
   unavailable_at: string | null
   availability: Availability | null
@@ -62,6 +64,8 @@ export interface Video {
   archived_at: string | null
   watched_at: string | null
   deleted_at: string | null
+  /** When a rescan found the file missing; null once it is linked again or downloaded again. */
+  lost_at: string | null
   created_at: string
   youtube_url: string
   thumbnail_url: string | null
@@ -291,6 +295,15 @@ export interface ResolvedSource {
 
 export type EntryStatus = VideoStatus | 'not_selected'
 
+/** Why a subscription's download policy skips an entry; null when it selects it. */
+export type SkipReason =
+  | 'policy_none'
+  | 'subscription_off'
+  | 'removed'
+  | 'not_ready'
+  | 'tab_off'
+  | 'before_subscribing'
+
 export interface Entry {
   youtube_id: string
   title: string | null
@@ -302,6 +315,8 @@ export interface Entry {
   removed_at: string | null
   video_id: number | null
   status: EntryStatus
+  /** Set only while `status` is `not_selected`. */
+  skip_reason: SkipReason | null
   job: JobState | null
   channel_name?: string | null
   view_count?: number | null
@@ -317,14 +332,40 @@ export interface EntryQuery {
 
 export type JobKind = 'download' | 'check' | 'scan'
 export type JobStatus = 'queued' | 'paused' | 'running' | 'completed' | 'failed' | 'cancelled'
-/** What a job list can filter by: `queued` is ready to run, `waiting` is queued until its `run_after`. */
-export type JobFilter = JobStatus | 'waiting'
+/**
+ * A job's state is its status, except that a queued job is `waiting` while its own wait or a pause on
+ * YouTube holds it back. Job lists filter by it, and `counts` is keyed by it.
+ */
+export type JobStateName = JobStatus | 'waiting'
+
+/** Why a job is in its current status. */
+export type Reason =
+  | 'asked'
+  | 'subscription_off'
+  | 'retry'
+  | 'premiere'
+  | 'refused'
+  | 'gone'
+  | 'needs_account'
+  | 'declined'
+  | 'error'
+
+/** What a waiting job waits on: the pause on YouTube work, or the job's own reason. */
+export type WaitingOn = 'youtube' | Reason
+
+/** What started a pause on YouTube work. */
+export type PauseCause = 'asked' | 'refused' | 'extras' | 'failures'
 
 /** A video's download job while it is queued, paused or running. */
 export interface JobState {
-  status: JobStatus
-  run_after: string | null
+  state: JobStateName
+  reason: Reason | null
+  /** Set only while `state` is `waiting`. */
+  waiting_on: WaitingOn | null
+  /** Set only while `state` is `waiting`. */
+  waits_until: string | null
   attempts: number
+  max_attempts: number
   error: string | null
 }
 
@@ -341,20 +382,32 @@ export interface Job {
   id: number
   kind: JobKind
   status: JobStatus
+  state: JobStateName
+  reason: Reason | null
+  /** Who asked for it: the owner by hand, a subscription's download policy, or a due check. */
+  origin: 'user' | 'policy' | 'schedule'
+  /** Set only while `state` is `waiting`. */
+  waiting_on: WaitingOn | null
+  /** Set only while `state` is `waiting`. */
+  waits_until: string | null
   priority: number
+  /** How many times YouTube has refused this job; each puts it behind the jobs it hasn't refused. */
+  refusals: number
   attempts: number
+  max_attempts: number
   error: string | null
   result: Record<string, unknown> | null
-  run_after: string | null
   created_at: string
   started_at: string | null
   finished_at: string | null
   video: { id: number; title: string; youtube_id: string } | null
   subscription: { id: number; title: string } | null
+  /** The subscription a download came through. */
+  via_subscription: { id: number; title: string } | null
   progress: JobProgress | null
 }
 
-export type JobCounts = Record<JobStatus, number> & { waiting: number }
+export type JobCounts = Record<JobStateName, number>
 
 export interface JobList {
   items: Job[]
@@ -362,18 +415,58 @@ export interface JobList {
   counts: JobCounts
   /** Set while YouTube work is paused. */
   youtube_paused_until: string | null
-  /** What YouTube said, while a refusal is why it's paused; null for a pause on request. */
+  /** What started the pause; null unless paused. */
+  youtube_pause_cause: PauseCause | null
+  /** The words behind the pause: what YouTube said, or why downloads stopped; null for a pause on request. */
   youtube_pause_reason: string | null
   /** Refusals in a row, until a video comes through. */
   youtube_refusals: number
+  /** When the next download may start, while downloads rest between one another. */
+  download_rest_until: string | null
 }
 
 export interface JobQuery {
   /** Several filters match any of them. */
-  status?: JobFilter | JobFilter[]
+  status?: JobStateName | JobStateName[]
   kind?: string
   limit?: number
   offset?: number
+}
+
+export type Actor = 'owner' | 'app' | 'cli'
+export type EventGroup = 'jobs' | 'youtube' | 'app'
+
+/** One entry of the record of what happened. */
+export interface ActivityEvent {
+  id: number
+  at: string
+  /** A name like `job.paused`; the part before the dot is its group. */
+  event: string
+  actor: Actor
+  job_id: number | null
+  job_kind: JobKind | null
+  /** The title is null once the video's row is gone. */
+  video: { id: number; title: string | null } | null
+  /** The title is null once the subscription's row is gone. */
+  subscription: { id: number; title: string | null } | null
+  reason: Reason | null
+  detail: string | null
+}
+
+export interface EventList {
+  items: ActivityEvent[]
+  /** The id to pass as `before` for older events; null on the last page. */
+  next_before: number | null
+}
+
+export interface EventQuery {
+  job_id?: number | null
+  video_id?: number | null
+  subscription_id?: number | null
+  group?: EventGroup | ''
+  /** Only events older than this id. */
+  before?: number | null
+  limit?: number
 }
 
 export interface Language {
@@ -424,9 +517,20 @@ export interface SystemInfo {
     subscriptions: number
     unavailable: number
   }
-  queue: { queued: number; running: number; failed: number }
+  queue: { queued: number; waiting: number; running: number; failed: number }
   trash: { videos: number; size: number }
+  /** Seconds, as the range each rest between two jobs of a kind is drawn from. */
+  pace: { download_rest: [number, number]; check_rest: [number, number] }
+  /** Read from the record, so clearing finished jobs doesn't erase it. */
+  activity: {
+    downloads_last_hour: number
+    downloads_last_day: number
+    last_download_at: string | null
+    last_refusal_at: string | null
+  }
   youtube_paused_until: string | null
+  youtube_pause_cause: PauseCause | null
   youtube_pause_reason: string | null
   youtube_refusals: number
+  download_rest_until: string | null
 }

@@ -11,14 +11,15 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.api import auth, channels, jobs, subscriptions, system, videos
+from app.api import auth, channels, events, jobs, subscriptions, system, videos
 from app.auth import current_user
 from app.config import apply_umask, config
 from app.db import Database
-from app.gate import Paused, YouTubeGate
-from app.jobs import JobRunner
+from app.events import record
+from app.gate import YouTubeGate
+from app.jobs import JobNotFound, JobRunner, NotAllowed
 from app.settings import Settings
-from app.youtube import YouTube
+from app.youtube import Paused, YouTube
 
 DIST = Path(__file__).resolve().parent / "app" / "static" / "dist"
 
@@ -52,11 +53,13 @@ def create_app(youtube: YouTube | None = None) -> FastAPI:
         app.state.youtube = YouTubeGate(youtube or YouTube(), db)
         await app.state.youtube.load()
         app.state.runner = JobRunner(db, app.state.youtube, app.state.settings)
+        await record(db, "app.started", actor="app", detail=__version__)
         await app.state.runner.start()
         try:
             yield
         finally:
             await app.state.runner.stop()
+            await record(db, "app.stopped", actor="app")
 
     app = FastAPI(title="YouHoard", version=__version__, lifespan=lifespan)
 
@@ -65,6 +68,14 @@ def create_app(youtube: YouTube | None = None) -> FastAPI:
         return JSONResponse(
             status_code=503, content={"detail": str(error), "resumes_at": error.until}
         )
+
+    @app.exception_handler(NotAllowed)
+    async def not_allowed(request: Request, error: NotAllowed):
+        return JSONResponse(status_code=409, content={"detail": str(error)})
+
+    @app.exception_handler(JobNotFound)
+    async def job_not_found(request: Request, error: JobNotFound):
+        return JSONResponse(status_code=404, content={"detail": "Job not found"})
 
     protected = [Depends(current_user)]
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
@@ -79,6 +90,7 @@ def create_app(youtube: YouTube | None = None) -> FastAPI:
         dependencies=protected,
     )
     app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"], dependencies=protected)
+    app.include_router(events.router, prefix="/api/events", tags=["events"], dependencies=protected)
     app.include_router(system.router, prefix="/api", tags=["system"], dependencies=protected)
 
     @app.get("/api/health", tags=["system"])

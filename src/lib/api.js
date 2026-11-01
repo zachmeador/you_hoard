@@ -250,8 +250,10 @@ export const api = {
      */
     list: (query) => request('GET', '/jobs' + qs({ ...query })),
     /**
+     * `run-now` ends a queued job's own wait and moves it back ahead of the jobs YouTube has refused;
+     * it answers 409 while YouTube work is paused.
      * @param {number} id
-     * @param {'cancel' | 'retry' | 'pause' | 'resume'} action
+     * @param {'cancel' | 'retry' | 'pause' | 'resume' | 'run-now'} action
      * @returns {Promise<{ ok: boolean }>}
      */
     act: (id, action) => request('POST', `/jobs/${id}/${action}`),
@@ -293,6 +295,16 @@ export const api = {
      * @returns {Promise<{ ok: boolean }>}
      */
     resumeYoutube: () => request('POST', '/jobs/resume-youtube')
+  },
+
+  events: {
+    /**
+     * The record of what happened, newest first. Pass a page's `next_before` as `before` for the
+     * events older than it.
+     * @param {T.EventQuery} query
+     * @returns {Promise<T.EventList>}
+     */
+    list: (query) => request('GET', '/events' + qs({ ...query }))
   },
 
   settings: {

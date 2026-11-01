@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from app import youtube
+from app import pace, youtube
 from app.youtube import DownloadRequest, YouTube
 from tests.test_adapter import DUBBED, fmt
 
@@ -114,7 +114,7 @@ def stubbed(monkeypatch):
     SponsorStub.failing = False
     monkeypatch.setattr(youtube.yt_dlp, "YoutubeDL", Stub)
     monkeypatch.setattr(youtube, "SponsorBlockPP", SponsorStub)
-    monkeypatch.setattr(youtube, "SUBTITLE_SLEEP", 0)
+    monkeypatch.setattr(pace, "SUBTITLE_SLEEP", 0)
 
 
 def download(tmp_path: Path, cancelled: threading.Event | None = None, **fields: Any):
@@ -232,3 +232,27 @@ def test_a_cancel_before_extraction_finishes_stops_early(stubbed, tmp_path):
     with pytest.raises(youtube.Cancelled):
         download(tmp_path, cancelled)
     assert len(Stub.instances) == 1
+
+
+def test_a_pause_that_begins_during_a_transfer_does_not_stop_it(stubbed, tmp_path, monkeypatch):
+    paused = threading.Event()
+    asked: list[bool] = []
+    original = Stub.process_ie_result
+
+    def pause_while_the_file_comes_down(self, raw, download=True):
+        if download and not self.params.get("skip_download"):
+            paused.set()
+        return original(self, raw, download)
+
+    def before_call() -> None:
+        asked.append(paused.is_set())
+        if paused.is_set():
+            raise youtube.Paused("2999-01-01T00:00:00Z")
+
+    monkeypatch.setattr(Stub, "process_ie_result", pause_while_the_file_comes_down)
+    adapter = YouTube(request_interval=0)
+    adapter.before_call = before_call
+    request = DownloadRequest("dQw4w9WgXcQ", tmp_path / "work", "best", [], False)
+    asyncio.run(adapter.download(request, lambda _: None, threading.Event()))
+    assert (tmp_path / "work" / "media.mp4").exists()
+    assert asked == [False]  # asked once, before it began, and never again

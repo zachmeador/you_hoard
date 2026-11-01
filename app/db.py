@@ -10,6 +10,7 @@ from typing import Any
 import aiosqlite
 
 MIGRATIONS = Path(__file__).parent / "migrations"
+VIEWS = Path(__file__).parent / "views.sql"
 
 
 class LegacyDatabaseError(RuntimeError):
@@ -108,6 +109,10 @@ class Database:
                     await conn.executescript(
                         f"BEGIN IMMEDIATE;\n{path.read_text()}\nPRAGMA user_version = {number};\nCOMMIT;"
                     )
+            # Views hold rules, not data, so they are rebuilt from their file at every start.
+            views = await fetch_all(conn, "SELECT name FROM sqlite_master WHERE type = 'view'")
+            drops = "".join(f'DROP VIEW "{view["name"]}";\n' for view in views)
+            await conn.executescript(f"BEGIN IMMEDIATE;\n{drops}{VIEWS.read_text()}\nCOMMIT;")
 
 
 async def fetch_all(

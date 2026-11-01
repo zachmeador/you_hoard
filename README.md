@@ -51,7 +51,8 @@ Videos disappear from YouTube all the time: channels get deleted, uploads go pri
 
 **Run**
 - A live queue with progress, pause, cancel and retry. Failed downloads retry with backoff.
-- Gentle with YouTube: downloads rest between one another. A bot check pauses all YouTube work, lookups included, for an hour (longer if YouTube keeps asking), and the pause holds across restarts. You can pause it yourself from the Queue page too.
+- Every paused, waiting or failed job says why, and an **Activity** page keeps the record of what the app did.
+- Gentle with YouTube: downloads rest a few minutes between one another. A bot check pauses all YouTube work, lookups included, for an hour (longer if YouTube keeps asking), and the pause holds across restarts. You can pause it yourself from the Queue page too.
 - Your copy stays when a video leaves YouTube, and the library can filter for videos known to be gone.
 - Removed files go to a trash for 30 days, and you can restore them from the video's page. Turn the trash off in **System** to delete right away.
 - A rescan refuses to mark most of the library missing, so an unmounted or mistyped media folder can't scramble it.

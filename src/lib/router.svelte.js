@@ -2,7 +2,7 @@ import { qs } from './api.js'
 
 /** @typedef {Record<string, string | number | null | undefined>} QueryParams */
 /**
- * @typedef {{ name: 'library' | 'subscriptions' | 'queue' | 'system' | 'not-found' }
+ * @typedef {{ name: 'library' | 'subscriptions' | 'queue' | 'activity' | 'system' | 'not-found' }
  *   | { name: 'video' | 'subscription', id: number }} Route
  */
 
@@ -96,6 +96,8 @@ export function matchRoute(path) {
       return { name: 'subscriptions' }
     case '/queue':
       return { name: 'queue' }
+    case '/activity':
+      return { name: 'activity' }
     case '/system':
       return { name: 'system' }
     default:

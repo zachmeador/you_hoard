@@ -34,7 +34,7 @@ def test_transient_failures_back_off_then_fail(archive):
                 and job
             )
         )
-        assert job["run_after"] and "503" in job["error"]
+        assert (job["state"], job["reason"]) == ("waiting", "retry") and "503" in job["error"]
         archive.sql("UPDATE jobs SET run_after = NULL")
         archive.app.state.runner.wake()
     failed = archive.wait_job(video["job_id"], "failed")
@@ -61,7 +61,13 @@ def test_running_downloads_can_be_cancelled(archive):
     archive.youtube.add(VIDEO)
     archive.youtube.hold.set()
     video = add(archive)
-    running = archive.wait_job(video["job_id"], "running")
+    archive.wait_job(video["job_id"], "running")
+    # A job is running a moment before its first progress arrives.
+    running = archive.wait(
+        lambda: (
+            (job := archive.job(video["job_id"]))["progress"] and job["progress"]["percent"] and job
+        )
+    )
     assert running["progress"]["percent"] == 10.0
     workdir = archive.media / ".youhoard" / "incomplete" / VIDEO
     workdir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +93,10 @@ def test_pause_resume_and_one_active_job_per_video(archive):
     async def enqueue_many():
         runner = archive.app.state.runner
         return await asyncio.gather(
-            *(runner.enqueue("download", video_id=second["id"]) for _ in range(10))
+            *(
+                runner.enqueue("download", video_id=second["id"], origin="user", actor="owner")
+                for _ in range(10)
+            )
         )
 
     assert set(archive.call(enqueue_many)) == {second["job_id"]}
@@ -120,7 +129,9 @@ def test_bulk_pause_and_resume_skip_jobs_in_the_wrong_state(archive):
     assert states() == ["running", "queued", "queued", "queued"]
     assert post("pause", running, waiting, second, 9999) == {"paused": 2}
     assert states() == ["running", "paused", "paused", "queued"]
-    assert archive.job(waiting)["run_after"] == LATER
+    assert archive.sql("SELECT run_after FROM jobs WHERE id = ?", (waiting,))[0] == {
+        "run_after": LATER
+    }  # pausing leaves a job's own wait alone
     assert post("pause", waiting, second) == {"paused": 0}
 
     archive.sql("UPDATE videos SET media_path = 'x.mp4' WHERE id = ?", (videos[1]["id"],))
