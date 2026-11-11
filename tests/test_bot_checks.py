@@ -237,7 +237,7 @@ def test_a_refused_job_goes_behind_every_job_youtube_has_not_refused(archive):
     assert downloads(archive) == [stuck, middle, low, stuck]
 
 
-def test_five_generic_download_failures_in_a_row_pause_youtube_for_an_hour(archive):
+def test_a_run_of_different_downloads_failing_pauses_youtube_for_an_hour(archive):
     failing = [f"failure{n:04d}" for n in range(pace.FAILURE_STREAK + 1)]
     for youtube_id in failing:
         archive.youtube.add(youtube_id)
@@ -504,10 +504,105 @@ def test_the_api_says_why_youtube_is_paused(archive):
         assert (status["youtube_pause_reason"], status["youtube_refusals"]) == (None, 1)
 
 
-def test_images_and_versions_do_not_wait_for_a_pause(archive):
-    refuse(archive)
+def test_channel_art_waits_for_a_pause_and_versions_do_not(archive):
     assert archive.call(archive.gate.fetch_image, AVATAR_URL) == AVATAR
+    refuse(archive)
+    with pytest.raises(Paused):
+        archive.call(archive.gate.fetch_image, AVATAR_URL)
+    assert archive.youtube.calls.count(("image", AVATAR_URL)) == 1
     assert archive.gate.versions() == archive.youtube.versions()
+
+
+def fail_lookups(archive, *youtube_ids: str) -> None:
+    for youtube_id in youtube_ids:
+        archive.youtube.failures[youtube_id] = YouTubeError("HTTP Error 503: Unavailable")
+        with contextlib.suppress(YouTubeError):
+            archive.call(archive.gate.fetch_video, youtube_id)
+
+
+def fail_checks(archive, *channel_ids: str) -> None:
+    archive.youtube.source_failure = YouTubeError("HTTP Error 503: Unavailable")
+    for channel_id in channel_ids:
+        with contextlib.suppress(YouTubeError):
+            archive.call(archive.gate.list_entries, "channel", channel_id, "video")
+    archive.youtube.source_failure = None
+
+
+def test_a_run_of_different_checks_failing_pauses_youtube(archive):
+    channels = [f"UCfailing{n}" for n in range(pace.FAILURE_STREAK)]
+    fail_checks(archive, *channels[:-1])
+    assert not archive.gate.paused
+    fail_checks(archive, channels[-1])
+    gate = archive.gate
+    assert gate.paused and gate.cause == "failures" and gate.refusals == 0
+    assert gate.reason.startswith(f"{pace.FAILURE_STREAK} different checks in a row failed")
+    assert 3590 < paused_for(gate) <= 3600
+
+
+def test_a_run_of_different_lookups_failing_pauses_youtube(archive):
+    fail_lookups(archive, *(f"lookup{n:05d}" for n in range(pace.FAILURE_STREAK)))
+    assert archive.gate.paused and "different lookups in a row" in archive.gate.reason
+
+
+def test_one_video_failing_again_and_again_pauses_nothing(archive):
+    fail_lookups(archive, *[LOOKUP] * (pace.FAILURE_STREAK + 2))
+    assert not archive.gate.paused
+    assert archive.gate.failures == {"lookup": [LOOKUP]}
+
+
+def test_each_kind_of_call_keeps_its_own_run(archive):
+    channels = [f"UCfailing{n}" for n in range(pace.FAILURE_STREAK)]
+    fail_checks(archive, *channels[:-1])
+    archive.youtube.add(VIDEO)
+    archive.call(archive.gate.fetch_video, VIDEO)  # lookups work during a refusal, as checks do
+    fail_checks(archive, channels[-1])
+    assert archive.gate.paused
+
+
+def test_a_call_that_goes_through_ends_the_run_of_its_kind(archive):
+    lookups = [f"lookup{n:05d}" for n in range(pace.FAILURE_STREAK * 2 - 2)]
+    fail_lookups(archive, *lookups[: pace.FAILURE_STREAK - 1])
+    archive.youtube.add(VIDEO)
+    archive.call(archive.gate.fetch_video, VIDEO)
+    assert archive.gate.failures == {}
+    fail_lookups(archive, *lookups[pace.FAILURE_STREAK - 1 :])
+    assert not archive.gate.paused
+
+
+def test_past_the_run_each_further_failure_waits_longer(archive):
+    lookups = [f"lookup{n:05d}" for n in range(pace.FAILURE_STREAK + 1)]
+    fail_lookups(archive, *lookups[:-1])
+    assert 3590 < paused_for(archive.gate) <= 3600
+    resume(archive)
+    fail_lookups(archive, lookups[-1])
+    assert 7190 < paused_for(archive.gate) <= 7200
+    assert archive.gate.reason.startswith(f"{pace.FAILURE_STREAK + 1} different lookups")
+
+
+def test_the_run_of_failures_and_the_rests_survive_a_restart(archive, monkeypatch):
+    fail_lookups(archive, *(f"lookup{n:05d}" for n in range(pace.FAILURE_STREAK - 1)))
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "download": (60.0, 60.0)})
+    archive.call(archive.gate.finished, "download")
+
+    gate = reloaded(archive)
+    assert gate.failures == archive.gate.failures and len(gate.failures["lookup"]) == 2
+    assert 55 < gate.rest_left("download") <= 61  # the first download after a restart still rests
+
+
+def test_a_download_a_pause_stops_partway_waits_it_out_without_using_an_attempt(
+    archive, monkeypatch
+):
+    archive.youtube.add(VIDEO)
+    gate = archive.gate
+
+    async def paused_while_downloading(request, progress, cancelled):
+        await gate.hold(3600)
+        gate.check()  # what its next request to YouTube meets
+
+    monkeypatch.setattr(archive.youtube, "download", paused_while_downloading)
+    job_id = add(archive)["job_id"]
+    job = archive.wait(lambda: (job := archive.job(job_id))["state"] == "waiting" and job)
+    assert (job["attempts"], job["waiting_on"], gate.refusals) == (0, "youtube", 0)
 
 
 def test_a_refused_lookup_pauses_youtube_and_queued_downloads_wait(archive):

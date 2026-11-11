@@ -62,7 +62,7 @@ def test_a_version_one_database_gains_the_new_columns_and_keeps_its_rows(tmp_pat
         assert status["status"] == "archived"
         assert status["job_waits_until"] is None and status["job_attempts"] is None
         pause = conn.execute("SELECT * FROM youtube_pause").fetchall()
-        assert [tuple(row) for row in pause] == [(1, None, 0, None, None)]
+        assert [tuple(row) for row in pause] == [(1, None, 0, None, None, "{}", "{}")]
 
 
 def pause_after_upgrading(path: Path, error: str | None, run_after: str, status: str = "queued"):
@@ -260,12 +260,16 @@ def column(conn, sql: str, params: tuple = ()) -> list:
 
 def test_a_database_stalled_behind_a_pause_carries_across(upgraded):
     conn = upgraded.conn
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(list(MIGRATIONS.glob("*.sql")))
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     pause = conn.execute("SELECT paused_until, refusals, reason FROM youtube_pause").fetchone()
     assert tuple(pause) == (PAUSE, 2, BOT_CHECK)  # the pause itself is untouched
     assert column(conn, "SELECT cause FROM youtube_pause") == ["refused"]
+    assert tuple(conn.execute("SELECT failures, rests FROM youtube_pause").fetchone()) == (
+        "{}",
+        "{}",
+    )
     assert column(conn, "SELECT count(*) FROM jobs") == [len(upgraded.ids)]
     assert column(conn, "SELECT id FROM jobs ORDER BY id") == sorted(upgraded.ids.values())
 

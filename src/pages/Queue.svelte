@@ -429,7 +429,7 @@
       {:else if cause === 'extras'}
         The video came through. {@render until()}, so the next ones don't lose theirs too.
       {:else if cause === 'failures'}
-        {@render until()}, in case the connection is the trouble.
+        {@render until()}, in case YouTube is refusing in words YouHoard doesn't know, or the connection is the trouble. The wait grows if they keep failing.
       {:else}
         {@render until()}, as you asked.
       {/if}

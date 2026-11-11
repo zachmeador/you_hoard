@@ -1,21 +1,31 @@
 """The parts of the yt-dlp adapter the fake bypasses, run offline against yt-dlp's own selector."""
 
 import asyncio
+import contextlib
+import io
+import sys
 import threading
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import pytest
-from yt_dlp.utils import DownloadError
+from yt_dlp.networking import Response
+from yt_dlp.networking.exceptions import HTTPError
+from yt_dlp.utils import DownloadError, ExtractorError
 
 from app import pace, youtube
 from app.tracks import AUTO, TRANSLATED, UPLOADED, Track, extra_audio, fits_mp4
 from app.youtube import (
+    Blocked,
+    Call,
     DownloadRequest,
     Paused,
+    Unavailable,
     YouTube,
     _channel_source,
     _entry,
@@ -80,7 +90,7 @@ DUBBED = raw_info(
 
 def picked(raw: dict[str, Any], cap: str, languages: list[str]) -> list[str]:
     selector = format_selector(cap, extra_audio(raw, languages))
-    return [fmt["format_id"] for fmt in YouTube()._selected(raw, selector)]
+    return [fmt["format_id"] for fmt in YouTube()._selected(Call(lambda: None), raw, selector)]
 
 
 def test_the_selector_without_extras_is_the_plain_resolution_first_one():
@@ -104,7 +114,7 @@ def test_the_original_is_not_selected_twice_and_a_premerged_format_stays_out():
 
 def test_extras_fit_mp4_when_every_stream_does():
     formats = YouTube()._selected(
-        DUBBED, format_selector("[height<=360]", extra_audio(DUBBED, ["es"]))
+        Call(lambda: None), DUBBED, format_selector("[height<=360]", extra_audio(DUBBED, ["es"]))
     )
     assert fits_mp4(formats)
     vp9_only = raw_info(
@@ -114,7 +124,9 @@ def test_extras_fit_mp4_when_every_stream_does():
             audio("140-1", "m4a", "es", -1, "mp4a.40.2"),
         ]
     )
-    chosen = YouTube()._selected(vp9_only, format_selector("", extra_audio(vp9_only, ["es"])))
+    chosen = YouTube()._selected(
+        Call(lambda: None), vp9_only, format_selector("", extra_audio(vp9_only, ["es"]))
+    )
     assert [fmt["format_id"] for fmt in chosen] == ["313", "140-0", "140-1"]
     assert not fits_mp4(chosen)
 
@@ -222,21 +234,33 @@ def test_images_come_over_https_within_limits(monkeypatch):
     assert fetch("https://yt3.invalid/moved") == b"\xff\xd8\xffjpeg"
     with pytest.raises(youtube.YouTubeError, match="too large"):
         fetch("https://yt3.invalid/huge")
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(youtube.YouTubeError, match="HTTP Error 404: Not Found from yt3.invalid"):
         fetch("https://yt3.invalid/missing")
     with pytest.raises(youtube.YouTubeError, match="https"):
         fetch("http://yt3.invalid/avatar")
 
 
-@pytest.fixture
-def captions(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
-    """A local stand-in for YouTube's captions: "/ok" serves one and "/limited" answers 429."""
-    monkeypatch.setattr(pace, "SUBTITLE_SLEEP", 0)
-    body = b"WEBVTT\n\n00:00.000 --> 00:01.000\nHi\n"
+@dataclass
+class Captions:
+    url: str
+    # The paths asked for, in order.
+    asked: list[str]
 
-    class Captions(BaseHTTPRequestHandler):
+
+@pytest.fixture
+def captions(monkeypatch: pytest.MonkeyPatch) -> Iterator[Captions]:
+    """A local stand-in for YouTube's captions, gated as YouTube's are: "/ok" serves one and
+    "/limited" answers 429."""
+    monkeypatch.setattr(pace, "SUBTITLE_SLEEP", 0)
+    monkeypatch.setattr(youtube, "YOUTUBE_DOMAINS", (*youtube.YOUTUBE_DOMAINS, "127.0.0.1"))
+    body = b"WEBVTT\n\n00:00.000 --> 00:01.000\nHi\n"
+    asked: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            self.send_response({"/ok": 200, "/limited": 429}.get(self.path, 404))
+            path = urlparse(self.path).path
+            asked.append(path)
+            self.send_response({"/ok": 200, "/limited": 429}.get(path, 404))
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -244,24 +268,28 @@ def captions(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
         def log_message(self, *args: Any) -> None:
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Captions)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_port}"
+    yield Captions(f"http://127.0.0.1:{server.server_port}", asked)
     server.shutdown()
 
 
 def fetch_extras(
-    workdir: Path, captions: str, *wanted: tuple[str, str, str]
+    workdir: Path,
+    captions: Captions,
+    *wanted: tuple[str, str, str],
+    before_request: Callable[[], None] = lambda: None,
 ) -> tuple[list[str], str | None]:
     """Run the real extras step over (language, source, path); returns saved tracks, refusal."""
     raw = raw_info([fmt("18", "mp4", vcodec="avc1.42001E", acodec="mp4a.40.2")])
     raw["subtitles"], raw["automatic_captions"] = {}, {}
     for lang, source, path in wanted:
         group = "subtitles" if source == UPLOADED else "automatic_captions"
-        raw[group][lang] = [{"ext": "vtt", "url": f"{captions}{path}"}]
+        raw[group][lang] = [{"ext": "vtt", "url": f"{captions.url}{path}"}]
     tracks = [Track(lang, lang, source) for lang, source, _ in wanted]
     request = DownloadRequest("dQw4w9WgXcQ", workdir, None, [], False)
-    saved, refused = YouTube()._extras(raw, request, tracks, False, lambda: None)
+    call = Call(before_request)
+    saved, refused = YouTube()._extras(call, raw, request, tracks, False, lambda: None)
     return [track.lang for track in saved], refused
 
 
@@ -278,9 +306,49 @@ def test_a_refused_subtitle_keeps_the_rest_and_says_what_youtube_answered(
 
 def test_a_refused_translation_is_only_a_lost_track(tmp_path, captions):
     saved, refused = fetch_extras(
-        tmp_path, captions, ("en", UPLOADED, "/ok"), ("de", TRANSLATED, "/limited")
+        tmp_path, captions, ("de", TRANSLATED, "/limited?tlang=de"), ("en", UPLOADED, "/ok")
     )
     assert (saved, refused) == (["en"], None)
+    assert captions.asked == ["/limited", "/ok"]  # it didn't stop the tracks after it
+
+
+def test_once_youtube_refuses_a_track_the_rest_are_not_asked_for(tmp_path, captions):
+    saved, refused = fetch_extras(
+        tmp_path, captions, ("de", UPLOADED, "/limited"), ("en", UPLOADED, "/ok")
+    )
+    assert saved == []
+    assert refused == "HTTP Error 429: Too Many Requests from 127.0.0.1"
+    assert captions.asked == ["/limited"]
+
+
+def test_a_pause_stops_the_extras_at_their_next_request(tmp_path, captions):
+    asked: list[bool] = []
+
+    def pause_after_the_first() -> None:
+        asked.append(True)
+        if len(asked) > 1:
+            raise Paused("2999-01-01T00:00:00Z")
+
+    with pytest.raises(youtube.StoppedByPause):
+        fetch_extras(
+            tmp_path,
+            captions,
+            ("en", UPLOADED, "/ok"),
+            ("de", UPLOADED, "/ok"),
+            before_request=pause_after_the_first,
+        )
+    assert captions.asked == ["/ok"]
+    assert (tmp_path / "media.en.vtt").is_file()  # kept for when the download picks up again
+
+
+def test_requests_elsewhere_pass_whatever_the_gate_says(tmp_path, captions, monkeypatch):
+    monkeypatch.setattr(youtube, "YOUTUBE_DOMAINS", ("youtube.com",))
+
+    def paused() -> None:
+        raise Paused("2999-01-01T00:00:00Z")
+
+    saved, _ = fetch_extras(tmp_path, captions, ("en", UPLOADED, "/ok"), before_request=paused)
+    assert saved == ["en"] and captions.asked == ["/ok"]
 
 
 def test_a_track_that_fails_for_another_reason_is_not_a_refusal(tmp_path, captions):
@@ -338,10 +406,22 @@ class Scripted:
     """Stands in for yt_dlp.YoutubeDL; what extract_info answers is set by each test."""
 
     calls: list[str] = []
+    requests: list[str] = []
+    # Statuses YouTube answers with, by a part of the request's URL.
+    statuses: dict[str, int] = {}
     answer: Callable[[str], Any]
+    # The latest instance, whose urlopen the adapter has wrapped.
+    current: "Scripted"
 
     def __init__(self, params: dict[str, Any]) -> None:
         self.params = params
+        Scripted.current = self
+
+    def urlopen(self, request: Any) -> None:
+        Scripted.requests.append(request)
+        for part, status in Scripted.statuses.items():
+            if part in request:
+                raise http_error(status, request)
 
     def __enter__(self) -> "Scripted":
         return self
@@ -359,9 +439,25 @@ class Scripted:
 
 @pytest.fixture
 def scripted(monkeypatch: pytest.MonkeyPatch) -> type[Scripted]:
-    Scripted.calls = []
+    Scripted.calls, Scripted.requests, Scripted.statuses = [], [], {}
     monkeypatch.setattr(youtube.yt_dlp, "YoutubeDL", Scripted)
     return Scripted
+
+
+def http_error(status: int, url: str) -> HTTPError:
+    reasons = {404: "Not Found", 429: "Too Many Requests", 503: "Service Unavailable"}
+    return HTTPError(Response(io.BytesIO(b""), url, {}, status=status, reason=reasons[status]))
+
+
+def as_ytdlp_reports(error: HTTPError) -> DownloadError:
+    """An HTTP error as yt-dlp hands it on: an ExtractorError caused by it, in a DownloadError."""
+    try:
+        try:
+            raise error
+        except HTTPError as cause:
+            raise ExtractorError(f"Unable to download webpage: {cause}", cause=cause) from cause
+    except ExtractorError as wrapped:
+        return DownloadError(f"ERROR: [youtube:tab] @nobody: {wrapped}", sys.exc_info())
 
 
 def refuse_while(paused: threading.Event) -> Callable[[], None]:
@@ -417,15 +513,63 @@ def test_a_pause_stops_a_listing_partway(scripted):
     pulled: list[int] = []
 
     def entries():
-        for n in range(10):
-            if n == 3:
-                paused.set()
-            pulled.append(n)
-            yield {"id": f"vid{n:08d}", "title": f"Video {n}"}
+        for page in range(4):
+            # Each page is a request; a pause begins while the second page is read.
+            scripted.current.urlopen(f"https://www.youtube.com/youtubei/v1/browse?page={page}")
+            for n in range(page * 3, page * 3 + 3):
+                if n == 4:
+                    paused.set()
+                pulled.append(n)
+                yield {"id": f"vid{n:08d}", "title": f"Video {n}"}
 
     scripted.answer = lambda url: {"entries": entries()}
     adapter = YouTube(request_interval=0)
     adapter.before_call = refuse_while(paused)
     with pytest.raises(Paused):
         asyncio.run(adapter.list_entries("playlist", "PLfixture0000000000000000000000001", None))
-    assert pulled == [0, 1, 2, 3]  # the rest of the listing was never asked for
+    assert pulled == [0, 1, 2, 3, 4, 5]  # the page in hand is read out
+    assert [url[-1] for url in scripted.requests] == ["0", "1"]  # the next was never asked for
+
+
+def test_a_request_youtube_refuses_ends_its_call_as_a_refusal(scripted):
+    player, after = (f"https://www.youtube.com/youtubei/v1/{name}" for name in ("player", "next"))
+    scripted.statuses = {"player": 429}
+
+    def extract(url: str) -> dict[str, Any]:
+        with contextlib.suppress(HTTPError):
+            scripted.current.urlopen(player)  # yt-dlp would try another client next
+        scripted.current.urlopen(after)
+        return {"id": url}
+
+    scripted.answer = extract
+    with pytest.raises(Blocked, match="HTTP Error 429: Too Many Requests from www.youtube.com"):
+        asyncio.run(YouTube(request_interval=0).fetch_video("dQw4w9WgXcQ"))
+    assert scripted.requests == [player]  # nothing after it, and no retry
+
+
+def test_a_429_is_a_refusal_whatever_words_surround_it():
+    error = as_ytdlp_reports(http_error(429, "https://www.youtube.com/@somebody"))
+    assert "429" in str(error)
+    plain = DownloadError("ERROR: [youtube] abc: Unable to download JSON metadata", error.exc_info)
+    assert isinstance(youtube.classify(plain), Blocked)
+
+
+def test_a_channel_youtube_has_never_heard_of_is_unavailable_not_a_failure(scripted):
+    def missing(url: str) -> dict[str, Any]:
+        raise as_ytdlp_reports(http_error(404, url))
+
+    scripted.answer = missing
+    adapter = YouTube(request_interval=0)
+    with pytest.raises(Unavailable, match="404"):
+        asyncio.run(adapter.resolve_source("channel", "https://www.youtube.com/@nobody"))
+    assert len(scripted.calls) == 1  # not retried, as a failure nothing explains would be
+
+
+def test_channel_art_waits_for_a_pause(monkeypatch):
+    monkeypatch.setattr(youtube.httpx, "AsyncClient", None)  # never reached
+    paused = threading.Event()
+    paused.set()
+    adapter = YouTube(request_interval=0)
+    adapter.before_call = refuse_while(paused)
+    with pytest.raises(Paused):
+        asyncio.run(adapter.fetch_image("https://yt3.ggpht.com/avatar=s0"))

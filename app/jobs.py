@@ -641,8 +641,10 @@ class JobRunner:
                     f"AND j.state = 'queued' AND j.kind IN ({marks}) ORDER BY {QUEUE_ORDER} LIMIT 1",
                     kinds,
                 )
-                if ready is None:
+                if ready is None or self._stopping:
                     return None
+                # Before the job shows as running, so a stop or a cancel from then on reaches it.
+                self._cancel[ready["id"]] = threading.Event()
                 job = await self._move(
                     conn,
                     ready["id"],
@@ -654,12 +656,14 @@ class JobRunner:
                     run_after=None,
                     attempts=ready["attempts"] + 1,
                 )
-            self.youtube.started(job["kind"])
+            await self.youtube.started(job["kind"])
             return job
 
     async def _run(self, job: dict[str, Any]) -> None:
         cancel = self._cancel.setdefault(job["id"], threading.Event())
         try:
+            if cancel.is_set():
+                raise Cancelled("Cancelled")  # stopped or cancelled while it was being claimed
             result = await self.handlers[job["kind"]](self, job, cancel)
         except Cancelled:
             if self._stopping:
@@ -724,7 +728,7 @@ class JobRunner:
             self._cancel.pop(job["id"], None)
             self._cancelled_by.pop(job["id"], None)
             self.progress.pop(job["id"], None)
-            self.youtube.finished(job["kind"])
+            await self.youtube.finished(job["kind"])
 
     async def _settle(
         self, job: dict[str, Any], to: str, event: str, *, actor: Actor = "app", **fields: Any

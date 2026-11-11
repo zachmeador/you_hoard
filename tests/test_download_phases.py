@@ -15,7 +15,7 @@ import pytest
 
 from app import pace, youtube
 from app.youtube import DownloadRequest, YouTube
-from tests.test_adapter import DUBBED, fmt
+from tests.test_adapter import DUBBED, fmt, http_error
 
 SUBTITLES = {
     "en": [{"ext": "vtt", "name": "English"}],
@@ -49,11 +49,16 @@ class Stub:
     instances: list["Stub"] = []
     failing: set[str] = set()
     crash_on_extras = False
+    # Every request sent, as the URL; the adapter has wrapped urlopen, so these passed the gate.
+    requests: list[str] = []
 
     def __init__(self, params: dict[str, Any]) -> None:
         self.params = params
         self.processed: list[dict[str, Any]] = []
         Stub.instances.append(self)
+
+    def urlopen(self, request: Any) -> None:
+        Stub.requests.append(request)
 
     def __enter__(self) -> "Stub":
         return self
@@ -76,6 +81,8 @@ class Stub:
         if self.params.get("skip_download"):
             return {"requested_formats": PICKED}
         assert workdir is not None
+        for piece in range(3):
+            self.urlopen(f"https://rr1.googlevideo.com/videoplayback?piece={piece}")
         (workdir / "media.mp4").write_bytes(b"video")
         for hook in self.params["progress_hooks"]:
             hook({"status": "downloading", "downloaded_bytes": 1, "total_bytes": 2})
@@ -88,6 +95,7 @@ class Stub:
             hook({"status": "downloading"})
         for pattern in self.params["subtitleslangs"]:
             lang = re.sub(r"\\(.)", r"\1", pattern)
+            self.urlopen(f"https://www.youtube.com/api/timedtext?lang={lang}")
             if lang in Stub.failing:
                 continue
             suffix = "json" if lang == "live_chat" else "vtt"
@@ -110,7 +118,7 @@ class SponsorStub:
 
 @pytest.fixture
 def stubbed(monkeypatch):
-    Stub.instances, Stub.failing, Stub.crash_on_extras = [], set(), False
+    Stub.instances, Stub.failing, Stub.crash_on_extras, Stub.requests = [], set(), False, []
     SponsorStub.failing = False
     monkeypatch.setattr(youtube.yt_dlp, "YoutubeDL", Stub)
     monkeypatch.setattr(youtube, "SponsorBlockPP", SponsorStub)
@@ -234,25 +242,46 @@ def test_a_cancel_before_extraction_finishes_stops_early(stubbed, tmp_path):
     assert len(Stub.instances) == 1
 
 
-def test_a_pause_that_begins_during_a_transfer_does_not_stop_it(stubbed, tmp_path, monkeypatch):
+def test_a_pause_that_begins_during_a_transfer_stops_it_at_its_next_request(
+    stubbed, tmp_path, monkeypatch
+):
     paused = threading.Event()
     asked: list[bool] = []
-    original = Stub.process_ie_result
 
-    def pause_while_the_file_comes_down(self, raw, download=True):
-        if download and not self.params.get("skip_download"):
+    def pause_during_the_first_piece(self, url: str) -> None:
+        Stub.requests.append(url)
+        if "videoplayback" in url:
             paused.set()
-        return original(self, raw, download)
 
     def before_call() -> None:
         asked.append(paused.is_set())
         if paused.is_set():
             raise youtube.Paused("2999-01-01T00:00:00Z")
 
-    monkeypatch.setattr(Stub, "process_ie_result", pause_while_the_file_comes_down)
+    monkeypatch.setattr(Stub, "urlopen", pause_during_the_first_piece)
     adapter = YouTube(request_interval=0)
     adapter.before_call = before_call
     request = DownloadRequest("dQw4w9WgXcQ", tmp_path / "work", "best", [], False)
-    asyncio.run(adapter.download(request, lambda _: None, threading.Event()))
-    assert (tmp_path / "work" / "media.mp4").exists()
-    assert asked == [False]  # asked once, before it began, and never again
+    with pytest.raises(youtube.Paused):
+        asyncio.run(adapter.download(request, lambda _: None, threading.Event()))
+    assert [url for url in Stub.requests if "videoplayback" in url] == [
+        "https://rr1.googlevideo.com/videoplayback?piece=0"
+    ]
+    assert not (tmp_path / "work" / "media.mp4").exists()
+    # Asked before the call began, before the first piece and before the second, which never went.
+    assert asked == [False, False, True]
+
+
+def test_a_refused_piece_ends_the_download_as_a_refusal(stubbed, tmp_path, monkeypatch):
+    def refuse_the_second_piece(self, url: str) -> None:
+        Stub.requests.append(url)
+        if url.endswith("piece=1"):
+            raise http_error(429, url)
+
+    monkeypatch.setattr(Stub, "urlopen", refuse_the_second_piece)
+    request = DownloadRequest("dQw4w9WgXcQ", tmp_path / "work", "best", ["en"], False)
+    with pytest.raises(youtube.Blocked, match="429"):
+        asyncio.run(
+            YouTube(request_interval=0).download(request, lambda _: None, threading.Event())
+        )
+    assert Stub.requests[-1].endswith("piece=1")  # not the third piece, nor a subtitle

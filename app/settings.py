@@ -12,7 +12,7 @@ DEFAULTS: dict[str, Any] = {
     "audio_languages": [],
     "live_chat": False,
     "sponsorblock": False,
-    "max_concurrent_downloads": 2,
+    "max_concurrent_downloads": 1,
     "check_interval_hours": 6,
     # Days removed files stay in the trash; 0 deletes them right away.
     "trash_days": 30,

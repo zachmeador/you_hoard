@@ -19,7 +19,7 @@ const WORDS = {
   'jobs.cleared': 'Cleared the finished jobs',
   'youtube.refused': 'YouTube refused a request',
   'youtube.extras_refused': 'YouTube refused a subtitle or live chat',
-  'youtube.failures': 'Downloads kept failing',
+  'youtube.failures': 'Calls to YouTube kept failing',
   'youtube.paused': 'YouTube work paused',
   'youtube.resumed': 'YouTube work resumed',
   'subscription.off': 'Subscription turned off',

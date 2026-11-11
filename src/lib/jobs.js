@@ -6,7 +6,7 @@ export const PAUSE_TITLES = {
   asked: 'YouTube work is paused',
   refused: 'YouTube refused a request',
   extras: 'YouTube refused a subtitle or live chat',
-  failures: 'Downloads keep failing'
+  failures: 'Calls to YouTube keep failing'
 }
 
 /** What a paused job's reason says. @type {Partial<Record<Reason, string>>} */

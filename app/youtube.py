@@ -1,5 +1,6 @@
 """The YouTube boundary: URL validation and a yt-dlp adapter that never blocks the event loop.
 
+Every request yt-dlp sends goes through `Call.send`, so the gate sees each one, not only each call.
 Tests replace `YouTube` with a fake that has the same async methods.
 """
 
@@ -21,6 +22,7 @@ import httpx
 import yt_dlp
 from yt_dlp.cookies import YoutubeDLCookieJar
 from yt_dlp.globals import supported_js_runtimes
+from yt_dlp.networking.exceptions import HTTPError
 from yt_dlp.postprocessor import SponsorBlockPP
 from yt_dlp.utils import DownloadCancelled
 
@@ -41,6 +43,18 @@ from app.tracks import (
 logger = logging.getLogger(__name__)
 
 HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
+# Where YouTube serves pages, video, captions and images from. A request anywhere else, such as
+# SponsorBlock's, isn't YouTube's business and passes ungated.
+YOUTUBE_DOMAINS = (
+    "youtube.com",
+    "youtu.be",
+    "youtube-nocookie.com",
+    "googlevideo.com",
+    "ytimg.com",
+    "ggpht.com",
+    "googleusercontent.com",
+    "google.com",
+)
 PLAYLIST_ID = re.compile(r"[A-Za-z0-9_-]{2,64}")
 TABS = {"video": "videos", "short": "shorts", "live": "streams"}
 NOT_READY = {"is_upcoming", "is_live", "post_live"}
@@ -152,10 +166,61 @@ class Paused(Exception):
         self.until = until
 
 
+class Stopped(DownloadCancelled):
+    """Ends a call from inside yt-dlp before it sends YouTube another request. yt-dlp lets
+    DownloadCancelled through wherever it catches errors, so nothing swallows it."""
+
+
+class StoppedByPause(Stopped):
+    def __init__(self, until: str) -> None:
+        super().__init__(f"YouTube is paused until {until}")
+        self.until = until
+
+
+class StoppedByRefusal(Stopped):
+    """YouTube refused an earlier request in the same call."""
+
+
+def is_youtube(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == domain or host.endswith(f".{domain}") for domain in YOUTUBE_DOMAINS)
+
+
+def is_translation(url: str) -> bool:
+    """A machine-translated caption. YouTube limits these heavily on their own, so a refusal of one
+    says little about the connection."""
+    return "tlang" in parse_qs(urlparse(url).query)
+
+
+def http_failure(error: BaseException) -> tuple[int, str] | None:
+    """The status and URL of the HTTP response that ended a call, if one did, found among the
+    errors yt-dlp wraps around it."""
+    pending: list[Any] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if not isinstance(current, BaseException) or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, HTTPError):
+            return current.status, current.response.url
+        exc_info = getattr(current, "exc_info", None)
+        pending += [
+            current.__cause__,
+            current.__context__,
+            getattr(current, "cause", None),
+            exc_info[1] if isinstance(exc_info, tuple) and len(exc_info) > 1 else None,
+        ]
+    return None
+
+
 def classify(error: Exception) -> YouTubeError:
     if isinstance(error, YouTubeError):
         return error
     text = str(error).removeprefix("ERROR: ")
+    failure = http_failure(error)
+    if failure and failure[0] == 429:
+        return Blocked(text)  # whatever yt-dlp's words around it
     lowered = text.lower()
     checks = (
         (WAITING, NotReady),
@@ -358,6 +423,52 @@ class DownloadRequest:
 ProgressCallback = Callable[[dict[str, Any]], None]
 
 
+class Call:
+    """One adapter call. Each request it sends YouTube asks the gate first, so a pause stops the
+    call at its next request, mid-download included. Once YouTube refuses a request, the call
+    sends it no more."""
+
+    def __init__(self, before_request: Callable[[], None]) -> None:
+        self._before_request = before_request
+        # What YouTube answered when it refused a request in this call.
+        self.refusal: str | None = None
+
+    def ydl(self, options: dict[str, Any]) -> yt_dlp.YoutubeDL:
+        """yt-dlp for this call. Every request it makes, from extraction to the last subtitle,
+        goes through `send`: extractors, downloaders and post-processors all use its urlopen."""
+        ydl = yt_dlp.YoutubeDL(options)
+        ydl.urlopen = functools.partial(self.send, ydl.urlopen)
+        return ydl
+
+    def send(self, urlopen: Callable[[Any], Any], request: Any) -> Any:
+        url = request if isinstance(request, str) else getattr(request, "url", "")
+        if url and not is_youtube(url):
+            return urlopen(request)
+        if self.refusal:
+            raise StoppedByRefusal(self.refusal)
+        try:
+            self._before_request()
+        except Paused as paused:
+            raise StoppedByPause(paused.until) from paused
+        try:
+            return urlopen(request)
+        except HTTPError as error:
+            if error.status == 429 and not is_translation(url):
+                self.refusal = f"{error} from {urlparse(url).hostname}"
+            raise
+
+
+def _extract_page(ydl: yt_dlp.YoutubeDL, url: str) -> dict[str, Any]:
+    """A channel tab or playlist, unprocessed. YouTube answers 404 or 410 when it doesn't exist."""
+    try:
+        return ydl.extract_info(url, download=False, process=False)
+    except yt_dlp.utils.DownloadError as error:
+        failure = http_failure(error)
+        if failure and failure[0] in (404, 410):
+            raise Unavailable(str(error).removeprefix("ERROR: ")) from error
+        raise
+
+
 class YouTube:
     def __init__(self, request_interval: float | None = None) -> None:
         self.request_interval = (
@@ -365,8 +476,8 @@ class YouTube:
         )
         self._lock = asyncio.Lock()
         self._last_start = 0.0
-        # Runs before each attempt and for each entry of a listing, on whatever thread is asking.
-        # The gate sets it to raise Paused while YouTube work is paused.
+        # Runs before each call starts and before each request it sends YouTube, on whatever thread
+        # is asking. The gate sets it to raise Paused while YouTube work is paused.
         self.before_call: Callable[[], None] = lambda: None
 
     def options(self, **extra: Any) -> dict[str, Any]:
@@ -389,35 +500,43 @@ class YouTube:
         options.update(extra)
         return options
 
-    async def _run(self, work: Callable[[], Any], retries: int | None = None) -> Any:
+    async def _turn(self) -> None:
+        """Wait until a call may start, spaced from the last one's start. A pause that began while
+        it waited stops it here."""
+        async with self._lock:
+            delay = self.request_interval - (time.monotonic() - self._last_start)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self.before_call()
+            self._last_start = time.monotonic()
+
+    async def _run(self, work: Callable[[Call], Any], retries: int | None = None) -> Any:
         if retries is None:
             retries = pace.CALL_RETRIES
         for attempt in range(retries + 1):
-            async with self._lock:
-                delay = self.request_interval - (time.monotonic() - self._last_start)
-                if delay > 0:
-                    await asyncio.sleep(delay)
-                # A pause that began while this call waited its turn stops it here, on any attempt.
-                self.before_call()
-                self._last_start = time.monotonic()
+            await self._turn()
+            call = Call(self.before_call)
             try:
-                return await asyncio.to_thread(work)
+                return await asyncio.to_thread(work, call)
+            except StoppedByPause as error:
+                raise Paused(error.until) from error
+            except StoppedByRefusal as error:
+                raise Blocked(str(error)) from error
             except DownloadCancelled as error:
                 raise Cancelled("Cancelled") from error
-            except Paused:
-                raise
             except Exception as error:
-                failure = classify(error)
+                # A refused request decides, whatever yt-dlp made of it afterwards.
+                failure = Blocked(call.refusal) if call.refusal else classify(error)
                 if type(failure) is not YouTubeError or attempt == retries:
                     raise failure from error
                 logger.warning("yt-dlp failed, retrying: %s", failure)
                 await asyncio.sleep(pace.CALL_RETRY_SLEEP * 3**attempt)
 
     async def resolve_source(self, kind: str, url: str) -> Source:
-        def work() -> Source:
+        def work(call: Call) -> Source:
             options = self.options(extract_flat="in_playlist", playlistend=1, noplaylist=False)
-            with yt_dlp.YoutubeDL(options) as ydl:
-                info = ydl.extract_info(url, download=False, process=False)
+            with call.ydl(options) as ydl:
+                info = _extract_page(ydl, url)
             if kind == "playlist":
                 return Source(
                     kind="playlist",
@@ -452,7 +571,7 @@ class YouTube:
         else:
             url = f"{channel_url(youtube_id)}/{TABS[video_type or 'video']}"
 
-        def work() -> Listing:
+        def work(call: Call) -> Listing:
             options = self.options(
                 extract_flat="in_playlist",
                 noplaylist=False,
@@ -461,19 +580,18 @@ class YouTube:
             entries: list[Entry] = []
             seen: set[str] = set()
             streak = 0
-            with yt_dlp.YoutubeDL(options) as ydl:
+            with call.ydl(options) as ydl:
                 try:
-                    info = ydl.extract_info(url, download=False, process=False)
+                    info = _extract_page(ydl, url)
                 except yt_dlp.utils.DownloadError as error:
                     if "does not have a" in str(error).lower():
                         return Listing([])  # e.g. a channel without a Shorts tab
                     raise
                 source = _channel_source(info) if kind == "channel" else None
+                # The entries arrive page by page, each page a request that asks the gate first.
                 for raw in info.get("entries") or ():
                     if cancelled is not None and cancelled.is_set():
                         raise DownloadCancelled("Cancelled")
-                    # The entries arrive page by page, so each one is a chance to stop asking.
-                    self.before_call()
                     entry = _entry(raw, kind, video_type)
                     if entry is None or entry.youtube_id in seen:
                         continue
@@ -488,28 +606,36 @@ class YouTube:
         return await self._run(work)
 
     async def fetch_video(self, youtube_id: str) -> dict[str, Any]:
-        def work() -> dict[str, Any]:
-            with yt_dlp.YoutubeDL(self.options()) as ydl:
+        def work(call: Call) -> dict[str, Any]:
+            with call.ydl(self.options()) as ydl:
                 info = ydl.extract_info(video_url(youtube_id), download=False, process=False)
                 return ydl.sanitize_info(info)
 
         return await self._run(work)
 
     async def fetch_image(self, url: str) -> bytes:
-        """An image from YouTube's CDN, such as a channel's avatar."""
+        """An image from YouTube's CDN, such as a channel's avatar. It takes its turn like a call."""
         if urlparse(url).scheme != "https":
             raise YouTubeError("Image URLs must use https")
+        await self._turn()
         timeout = httpx.Timeout(15, connect=5)
-        async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=True, max_redirects=3
-        ) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                data = bytearray()
-                async for chunk in response.aiter_bytes():
-                    data.extend(chunk)
-                    if len(data) > MAX_IMAGE_BYTES:
-                        raise YouTubeError("The image is too large")
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout, follow_redirects=True, max_redirects=3
+            ) as client:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    data = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > MAX_IMAGE_BYTES:
+                            raise YouTubeError("The image is too large")
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            text = (
+                f"HTTP Error {status}: {error.response.reason_phrase} from {error.request.url.host}"
+            )
+            raise (Blocked if status == 429 else YouTubeError)(text) from error
         return bytes(data)
 
     async def download(
@@ -541,14 +667,14 @@ class YouTube:
         height = quality_height(request.quality)
         cap = f"[height<={height}]" if height else ""
 
-        def work() -> dict[str, Any]:
+        def work(call: Call) -> dict[str, Any]:
             request.workdir.mkdir(parents=True, exist_ok=True)
             extraction = self.options(
                 getcomments=request.comments,
                 extractor_args={"youtube": {"max_comments": ["1000", "all", "100"]}},
             )
             # The extractor stays open: it fetches the comments while the video is processed.
-            with yt_dlp.YoutubeDL(extraction) as extractor:
+            with call.ydl(extraction) as extractor:
                 raw = extractor.extract_info(
                     video_url(request.youtube_id), download=False, process=False
                 )
@@ -569,7 +695,9 @@ class YouTube:
                 selector = format_selector(cap, audio)
                 # Several audio streams make yt-dlp pick MKV; MP4 holds them when the codecs fit.
                 merge = (
-                    "mp4" if audio and fits_mp4(self._selected(pristine, selector)) else "mp4/mkv"
+                    "mp4"
+                    if audio and fits_mp4(self._selected(call, pristine, selector))
+                    else "mp4/mkv"
                 )
                 options = self.options(
                     format=selector,
@@ -586,7 +714,7 @@ class YouTube:
                     progress_hooks=[hook],
                     postprocessor_hooks=[postprocessor_hook],
                 )
-                with yt_dlp.YoutubeDL(options) as ydl:
+                with call.ydl(options) as ydl:
                     info = ydl.sanitize_info(ydl.process_ie_result(raw, download=True))
 
             if comment_count is not None:
@@ -595,20 +723,22 @@ class YouTube:
             refused = None
             if tracks or chat:
                 progress({"status": "processing"})
-                saved, refused = self._extras(pristine, request, tracks, chat, check_cancelled)
+                saved, refused = self._extras(
+                    call, pristine, request, tracks, chat, check_cancelled
+                )
             info["_youhoard"] = {"subtitles": [track.as_dict() for track in saved]}
             if refused:
                 info["_youhoard"]["refused"] = refused
             if request.sponsorblock:
                 check_cancelled()
-                segments = self._segments(pristine)
+                segments = self._segments(call, pristine)
                 if segments is not None:
                     info["sponsorblock_chapters"] = segments
             return info
 
         return await self._run(work, retries=0)
 
-    def _selected(self, raw: dict[str, Any], selector: str) -> list[dict[str, Any]]:
+    def _selected(self, call: Call, raw: dict[str, Any], selector: str) -> list[dict[str, Any]]:
         """The formats a selector picks, without downloading anything."""
         options = self.options(
             format=selector,
@@ -616,12 +746,13 @@ class YouTube:
             allow_multiple_audio_streams=True,
             skip_download=True,
         )
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with call.ydl(options) as ydl:
             info = ydl.process_ie_result(copy.deepcopy(raw), download=False)
         return info.get("requested_formats") or [info]
 
     def _extras(
         self,
+        call: Call,
         raw: dict[str, Any],
         request: DownloadRequest,
         tracks: list[Track],
@@ -630,7 +761,10 @@ class YouTube:
     ) -> tuple[list[Track], str | None]:
         """Fetch subtitles and live chat next to the media. Returns the tracks that were saved,
         and what YouTube said if it refused one. A refused translation doesn't count: YouTube
-        limits those heavily on their own, so losing one says little about the connection."""
+        limits those heavily on their own, so losing one says little about the connection.
+
+        Once YouTube refuses a track, the rest aren't asked for. A pause stops the download, which
+        picks up later from the media already in its folder."""
         log = ExtrasLogger()
         languages = [re.escape(track.lang) for track in tracks]
         if chat:
@@ -654,8 +788,10 @@ class YouTube:
             progress_hooks=[lambda data: check_cancelled()],
         )
         try:
-            with yt_dlp.YoutubeDL(options) as ydl:
+            with call.ydl(options) as ydl:
                 ydl.process_ie_result(raw, download=True)
+        except StoppedByRefusal:
+            pass  # the tracks it cost are counted below
         except DownloadCancelled:
             raise
         except Exception as error:
@@ -665,12 +801,13 @@ class YouTube:
         ]
         lost = {track.source for track in tracks if track not in saved} - {TRANSLATED}
         lost_chat = chat and not (request.workdir / "media.live_chat.json").is_file()
-        return saved, log.refusal if lost or lost_chat else None
+        refusal = call.refusal or log.refusal
+        return saved, refusal if lost or lost_chat else None
 
-    def _segments(self, raw: dict[str, Any]) -> list[dict[str, Any]] | None:
+    def _segments(self, call: Call, raw: dict[str, Any]) -> list[dict[str, Any]] | None:
         """SponsorBlock segments for the video, or None if the lookup failed."""
         try:
-            with yt_dlp.YoutubeDL(self.options()) as ydl:
+            with call.ydl(self.options()) as ydl:
                 _, info = SponsorBlockPP(ydl, categories=SPONSOR_CATEGORIES).run(
                     {
                         "id": raw["id"],

@@ -1,6 +1,7 @@
 """The persistent queue: retries, cancellation, pausing and restart recovery."""
 
 import asyncio
+import threading
 
 from app.youtube import Unavailable, YouTubeError
 from tests.test_library import OTHER, VIDEO, add
@@ -19,6 +20,8 @@ def hold_queue(archive, queued=3):
         archive.youtube.add(youtube_id)
         videos.append(add(archive, youtube_id))
     archive.wait_job(videos[0]["job_id"], "running")
+    # Running in the queue isn't yet under way: it passes the gate a moment later.
+    archive.wait(lambda: any(call[0] == "download" for call in archive.youtube.calls))
     return videos
 
 
@@ -44,6 +47,27 @@ def test_transient_failures_back_off_then_fail(archive):
     assert archive.client.post(f"/api/jobs/{failed['id']}/retry").status_code == 200
     archive.wait_job(failed["id"])
     assert archive.client.post(f"/api/jobs/{failed['id']}/retry").status_code == 409
+
+
+def test_a_stop_reaches_a_job_claimed_a_moment_before(archive, monkeypatch):
+    claimed = threading.Event()
+    recorded = archive.gate.started
+
+    async def slow_to_record(kind: str) -> None:
+        claimed.set()
+        await asyncio.sleep(0.3)  # the job shows as running, but hasn't started its handler
+        await recorded(kind)
+
+    monkeypatch.setattr(archive.gate, "started", slow_to_record)
+    archive.youtube.add(VIDEO)
+    archive.youtube.hold.set()  # a download that began would run until cancelled
+    job_id = add(archive)["job_id"]
+    assert claimed.wait(5)
+
+    archive.call(asyncio.wait_for, archive.app.state.runner.stop(), 5)
+    job = archive.job(job_id)
+    assert (job["status"], job["attempts"]) == ("queued", 0)
+    assert not [call for call in archive.youtube.calls if call[0] == "download"]
 
 
 def test_gone_videos_fail_at_once_and_are_flagged(archive):

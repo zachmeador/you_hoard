@@ -201,7 +201,10 @@ def test_a_refused_extra_and_a_run_of_failures_are_recorded_as_the_apps(archive)
     queue_stopped(archive, failing)
     archive.wait(lambda: any(e["event"] == "youtube.failures" for e in archive.events()))
     streak = latest(archive, "youtube.failures")
-    assert streak["actor"] == "app" and "5 downloads in a row failed" in streak["detail"]
+    assert (
+        streak["actor"] == "app"
+        and f"{pace.FAILURE_STREAK} different downloads in a row failed" in streak["detail"]
+    )
     assert archive.client.get("/api/jobs").json()["youtube_pause_cause"] == "failures"
 
 

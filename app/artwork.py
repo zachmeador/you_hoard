@@ -7,7 +7,7 @@ from pathlib import Path
 from app import layout
 from app.db import Database
 from app.gate import YouTubeGate
-from app.youtube import Source
+from app.youtube import Blocked, Paused, Source
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,8 @@ async def first_image(youtube: YouTubeGate, urls: list[str]) -> bytes | None:
     for url in urls:
         try:
             data = await youtube.fetch_image(url)
+        except (Paused, Blocked):
+            raise  # YouTube work is paused, so the other images wait too
         except Exception as error:
             logger.warning("Could not fetch channel art: %s", error)
             continue
@@ -72,6 +74,8 @@ async def save_channel_art(
             await db.execute(
                 f"UPDATE channels SET {assignments} WHERE id = ?", (*changed.values(), channel_id)
             )
+    except Paused:
+        pass  # the channel's next check saves it
     except Exception as error:
         logger.warning("Could not save art for channel %s: %s", source.youtube_id, error)
     finally:

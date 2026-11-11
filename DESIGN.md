@@ -15,7 +15,7 @@ A single-user YouTube archive: follow channels and playlists, save individual vi
 
 `main.py` builds the FastAPI app. On startup it applies migrations, then starts the `JobRunner` (`app/jobs.py`):
 
-- download workers (count from the `max_concurrent_downloads` setting, adjustable at runtime),
+- download workers (count from the `max_concurrent_downloads` setting, 1 unless changed at runtime),
 - one general worker for subscription checks and library scans,
 - a scheduler tick (every 30 s) that queues checks for subscriptions whose `next_check_at` has passed.
 
@@ -101,16 +101,22 @@ The job then moves the media, thumbnail (JPEG), subtitles (VTT), chat and `.info
 
 Transient failures retry with backoff (15 min, 1 h, 4 h) before failing. "Video unavailable"-type errors fail immediately and set `unavailable_at`. Running downloads can be cancelled.
 
-YouTube gets a gentle pace, and `app/pace.py` holds every number that sets it. After a download starts or finishes, no other starts for 2–4 minutes; after a check, 20–40 s. The gate enforces this across all workers, and jobs stay queued meanwhile. yt-dlp sleeps 0.75 s between extraction requests and 5 s between subtitle files, and each adapter call's start is spaced from the last one by `YTDLP_REQUEST_INTERVAL`.
+YouTube gets a gentle pace, and `app/pace.py` holds every number that sets it. After a download starts or finishes, no other starts for 2–4 minutes; after a check, 20–40 s. The gate enforces this across all workers and keeps it through a restart, and jobs stay queued meanwhile. yt-dlp sleeps 0.75 s between extraction requests and 5 s between subtitle files, and each adapter call's start, channel art included, is spaced from the last one by `YTDLP_REQUEST_INTERVAL`.
 
-Every YouTube call goes through one gate (`app/gate.py`): downloads, checks and the API's URL lookups. A refusal from any of them pauses all of them, rather than letting each caller run into it. Refusals are a bot check, a CAPTCHA, a 429 or "try again later". A refused subtitle or live chat pauses for a fixed hour: its video is kept and counts as a success, but the next videos would lose theirs. A refused translated caption pauses nothing: YouTube limits those on their own, so losing one says little about the connection. Five generic download failures in a row also pause for a fixed hour, in case the connection is the trouble. While the gate is paused, calls are turned away before they reach YouTube:
+Every YouTube call goes through one gate (`app/gate.py`): downloads, checks, the API's URL lookups and channel art. So does every request within a call: the adapter hands yt-dlp an `urlopen` that asks the gate first (`Call` in `app/youtube.py`), and yt-dlp's extractors, downloaders and post-processors all send through it. That covers each listing page, comment page, piece of a video and subtitle file. Requests to other hosts, such as SponsorBlock, pass.
+
+A refusal from any call pauses all of them, rather than letting each caller run into it. Refusals are a bot check, a CAPTCHA, "try again later", or any request YouTube answers with 429, whatever yt-dlp makes of it. Once YouTube refuses a request, the call it belongs to sends no more: no more pages, pieces or subtitles. A refused subtitle or live chat pauses for a fixed hour: its video is kept and counts as a success, but the next videos would lose theirs. A refused translated caption pauses nothing and stops nothing: YouTube limits those on their own, so losing one says little about the connection.
+
+Failures nothing explains pause too, since that's how a refusal in words YouHoard doesn't know would look, and so would a bad connection. Three in a row of one kind (downloads, checks or lookups), each about a different video, subscription or URL, pause for an hour; each further one, before a call of that kind goes through, waits 2, 4, 8, then 12 hours. A video failing on every retry says something is wrong with that video, so its retries don't add to the run. A channel or playlist URL that YouTube answers with 404 is reported as not existing, and isn't counted.
+
+While the gate is paused, calls are turned away before they reach YouTube:
 
 - a URL lookup answers 503;
 - a job goes back to the queue without using an attempt, and queued YouTube jobs show as waiting, retried ones included;
-- a running listing stops at its next entry, and a call that was waiting its turn doesn't start;
+- a call under way stops at its next request, and a call that was waiting its turn doesn't start;
 - the scheduler queues no checks.
 
-A download that's already transferring finishes. A job counts YouTube's refusals of it and goes behind every job YouTube hasn't refused (`QUEUE_ORDER` in `app/jobs.py`), so one video it won't serve can't hold up the queue. Run now puts a job at the front instead, skipping its own wait. Pauses after a refusal last 1, 2, 4, 8, then 12 hours while YouTube keeps refusing. Only a completed download that began after the latest refusal resets that ladder: listings and lookups keep working through a bot check, so they prove nothing. An age-gated video isn't a refusal: it fails on its own, like other videos that need an account. The pause, its cause, the run of refusals and YouTube's last message are kept in the database, so a restart neither forgets the pause nor starts the ladder over. The Queue page shows the pause and what caused it, with "Resume now" (`POST /api/jobs/resume-youtube`), which ends the pause but keeps the count. It can also pause all YouTube work on request (`POST /api/jobs/pause-youtube`). Nothing was refused, so that doesn't climb the ladder, and a longer pause already running stands.
+A download stopped partway keeps what it fetched in its folder and picks up from there when it runs again. A job counts YouTube's refusals of it and goes behind every job YouTube hasn't refused (`QUEUE_ORDER` in `app/jobs.py`), so one video it won't serve can't hold up the queue. Run now puts a job at the front instead, skipping its own wait. Pauses after a refusal last 1, 2, 4, 8, then 12 hours while YouTube keeps refusing. Only a completed download that began after the latest refusal resets that ladder: listings and lookups keep working through a bot check, so they prove nothing. An age-gated video isn't a refusal: it fails on its own, like other videos that need an account. The pause, its cause, the runs of refusals and failures, YouTube's last message and the rests are kept in the database, so a restart neither forgets the pause, starts a ladder over, nor lets a job skip its rest. The Queue page shows the pause and what caused it, with "Resume now" (`POST /api/jobs/resume-youtube`), which ends the pause but keeps the count. It can also pause all YouTube work on request (`POST /api/jobs/pause-youtube`). Nothing was refused, so that doesn't climb the ladder, and a longer pause already running stands.
 
 System says what a cookie file offers without asking YouTube: whether it can be read, and whether it holds a signed-in session by yt-dlp's own test. Only using it shows whether YouTube accepts it.
 
