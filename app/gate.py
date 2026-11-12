@@ -47,13 +47,19 @@ def stamp(timestamp: float) -> str:
     return from_timestamp(math.ceil(timestamp))
 
 
+def rests_as(kind: str) -> str:
+    """The kind whose rest a job of this kind keeps."""
+    return pace.REST_WITH.get(kind, kind)
+
+
 class YouTubeGate:
     """The YouTube adapter behind a pause. A refusal pauses every call for longer each time
     YouTube refuses in a row, and so does a run of failures nothing explains. The adapter asks
     before every request it sends YouTube, so a pause stops calls already under way too.
 
     It also keeps the pace between jobs: after one of a kind starts or finishes, no other of that
-    kind starts until its rest is over, however many workers there are.
+    kind, or of a kind that shares its rest (pace.REST_WITH), starts until the rest is over,
+    however many workers there are.
 
     The pause, the counts and the rests are saved, so a restart keeps them all.
     """
@@ -107,7 +113,7 @@ class YouTubeGate:
 
     def rest_left(self, kind: str) -> float:
         """Seconds until another job of this kind may start; 0 when it may now."""
-        return max(0.0, self._rest_until.get(kind, 0.0) - time.monotonic())
+        return max(0.0, self._rest_until.get(rests_as(kind), 0.0) - time.monotonic())
 
     def rest_ends(self, kind: str) -> str | None:
         """When another job of this kind may start, or None when it may now."""
@@ -126,6 +132,7 @@ class YouTubeGate:
         await self._rest(kind)
 
     async def _rest(self, kind: str) -> None:
+        kind = rests_as(kind)
         if rest := pace.REST.get(kind):
             self._rest_until[kind] = time.monotonic() + random.uniform(*rest)
             await self._save()
@@ -142,7 +149,7 @@ class YouTubeGate:
         self.reason = row["reason"]
         self.failures = loads(row["failures"]) or {}
         for kind, until in (loads(row["rests"]) or {}).items():
-            if ends := parse_time(until):
+            if kind in pace.REST and (ends := parse_time(until)):
                 left = ends.timestamp() - time.time()
                 self._rest_until[kind] = time.monotonic() + max(0.0, left)
 

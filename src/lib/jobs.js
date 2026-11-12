@@ -62,6 +62,8 @@ export function waitingWhy(job) {
   switch (job.waiting_on) {
     case 'youtube':
       return job.refusals ? `YouTube work paused · refused ${times(job.refusals)}` : 'YouTube work paused'
+    case 'refused':
+      return refusalCount(job.refusals || 1)
     case 'retry':
       return `Attempt ${job.attempts + 1} of ${job.max_attempts}${job.error ? ` after ${refusalWords(job.error)}` : ''}`
     case 'premiere':

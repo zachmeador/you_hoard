@@ -12,16 +12,21 @@ LISTING_SLEEP = 1
 SUBTITLE_SLEEP = 5
 
 # Seconds, as a range to draw from, that no other job of the kind starts after one starts or
-# finishes. The gate enforces it across all workers and keeps it through a restart. Extras jobs,
-# which fetch the subtitles and live chat a download missed, are small but ask for what YouTube
-# refuses first, so they rest as long as downloads.
-REST = {"download": (120.0, 240.0), "check": (20.0, 40.0), "extras": (120.0, 240.0)}
+# finishes. The gate enforces it across all workers and keeps it through a restart.
+REST = {"download": (120.0, 240.0), "check": (20.0, 40.0)}
+# Kinds that share another's rest. Extras jobs, which fetch the subtitles and live chat a download
+# missed, are small but ask for what YouTube refuses first, so neither they nor a download start
+# within a download's rest of either.
+REST_WITH = {"extras": "download"}
 
 # How long YouTube work waits after a bot check, longer each time YouTube refuses in a row.
 BLOCK_PAUSES = (3600, 2 * 3600, 4 * 3600, 8 * 3600, 12 * 3600)
 # How long YouTube work waits after it refuses a subtitle or live chat. The video came through, so
 # this stays off the ladder above. An extras job fetches the lost tracks later.
 EXTRAS_PAUSE = 3600
+# How long an extras job YouTube refused waits before asking again. YouTube's limit on subtitles
+# outlasts the pause, so asking again as it ends only starts another.
+EXTRAS_RETRY = 24 * 3600
 # Calls of one kind (downloads, checks or lookups) that fail for no particular reason, this many in
 # a row and each about a different video, subscription or URL, look like a refusal in words
 # YouHoard doesn't know, or trouble with the connection. YouTube work then waits the first of

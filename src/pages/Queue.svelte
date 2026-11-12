@@ -549,7 +549,8 @@
             <td class="c-pos num">{startOf('queued') + i + 1}</td>
             <td class="c-main keep">
               {#if link}<a class="ttl" href={link}>{title}</a>{:else}<span class="ttl">{title}</span>{/if}
-              {#if job.refusals > 0}<div class="why">{refusalCount(job.refusals)}, so it moved back</div>{/if}
+              {#if job.kind === 'extras'}<div class="why">Runs when no download is ready</div>
+              {:else if job.refusals > 0}<div class="why">{refusalCount(job.refusals)}, so it moved back</div>{/if}
               <div class="m-meta">{JOB_KINDS[job.kind]} · added {rel(job.created_at, clock.now)} · {@render historyLink(job)}</div>
             </td>
             <td class="num c-added">{rel(job.created_at, clock.now)}</td>

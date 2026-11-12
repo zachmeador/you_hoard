@@ -468,7 +468,7 @@
               {#if extras.state === 'running'}Missing tracks: fetching now
               {:else if extras.state === 'paused'}Missing tracks: paused
               {:else if extras.state === 'waiting' && extras.waits_until}Missing tracks: after {whenShort(extras.waits_until, clock.now)} ({rel(extras.waits_until, clock.now)})
-              {:else}Missing tracks: queued{/if}
+              {:else}Missing tracks: after the downloads{/if}
               · <a class="lnk" href={href('/activity', { job: extras.id })}>History</a>
             </p>
           {/if}

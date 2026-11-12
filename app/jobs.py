@@ -66,9 +66,15 @@ MOVES = {
     "cancelled": ("queued",),
     "completed": (),
 }
-# What runs next: jobs YouTube hasn't refused first, then the more urgent, then the older. The
-# queries that use it name job_state `j`.
-QUEUE_ORDER = "j.refusals, j.priority DESC, j.id"
+# What runs next: extras jobs after everything else, then jobs YouTube hasn't refused first, then
+# the more urgent, then the older. The queries that use it name job_state `j`.
+QUEUE_ORDER = "j.kind = 'extras', j.refusals, j.priority DESC, j.id"
+# An extras job starts only while no download is running or ready to. It asks for what YouTube
+# refuses first, and the pause a refusal starts would stop or hold up the download.
+DOWNLOADS_IDLE = (
+    "NOT EXISTS (SELECT 1 FROM job_state d WHERE d.kind = 'download' "
+    "AND d.status IN ('queued', 'running') AND d.state IN ('queued', 'running'))"
+)
 # Events logged as warnings: the job didn't get what it asked for.
 WARNINGS = ("job.refused", "job.retrying", "job.failed")
 
@@ -656,7 +662,8 @@ class JobRunner:
                 ready = await fetch_one(
                     conn,
                     f"SELECT j.id, j.attempts FROM job_state j WHERE j.status = 'queued' "
-                    f"AND j.state = 'queued' AND j.kind IN ({marks}) ORDER BY {QUEUE_ORDER} LIMIT 1",
+                    f"AND j.state = 'queued' AND j.kind IN ({marks}) "
+                    f"AND (j.kind != 'extras' OR {DOWNLOADS_IDLE}) ORDER BY {QUEUE_ORDER} LIMIT 1",
                     kinds,
                 )
                 if ready is None or self._stopping:
@@ -711,6 +718,9 @@ class JobRunner:
         except Blocked as error:
             # It gets its attempt back, since a refusal is rarely the job's fault. It goes behind
             # the others in case it is: one video YouTube won't serve mustn't hold up the queue.
+            # An extras job also waits pace.EXTRAS_RETRY, since YouTube's limit on subtitles
+            # outlasts the pause.
+            retry = job["kind"] == "extras"
             await self._settle(
                 job,
                 "queued",
@@ -719,6 +729,7 @@ class JobRunner:
                 detail=str(error),
                 error=str(error),
                 refusals=job["refusals"] + 1,
+                run_after=later(seconds=pace.EXTRAS_RETRY) if retry else None,
                 started_at=None,
                 attempts=max(job["attempts"] - 1, 0),
             )
@@ -747,6 +758,7 @@ class JobRunner:
             self._cancelled_by.pop(job["id"], None)
             self.progress.pop(job["id"], None)
             await self.youtube.finished(job["kind"])
+            self.wake()  # an extras job may have been waiting for this download
 
     async def _settle(
         self, job: dict[str, Any], to: str, event: str, *, actor: Actor = "app", **fields: Any

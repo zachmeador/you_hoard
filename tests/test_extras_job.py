@@ -1,13 +1,20 @@
 """What a download missed, subtitles and live chat, is fetched by a job of its own later."""
 
+from datetime import UTC, datetime, timedelta
+
+from app import pace
+from app.db import parse_time
 from app.youtube import Blocked, Paused, YouTubeError
 from tests.fake_youtube import chat_line
 from tests.test_bot_checks import BOT, RATE_LIMIT, pause, resume
 from tests.test_details import archived, sidecar_of
+from tests.test_jobs import hold_queue
 from tests.test_library import VIDEO, add
 from tests.test_scan import rescan
 
 SUBTITLES = {"en": "English", "de": "German", "fr": "French"}
+# A video archived before the downloads that hold up its extras job.
+EARLIER = "subtitles01"
 
 
 def queue_extras(archive, youtube_id=VIDEO, **options) -> int:
@@ -110,7 +117,7 @@ def test_the_job_asks_only_for_what_is_not_already_there(archive):
     assert archive.youtube.calls[-1][2:] == ({"en", "de"}, True)
 
 
-def test_a_refusal_during_the_job_pauses_everything_and_marks_the_job_refused(archive):
+def test_a_refusal_during_the_job_pauses_everything_and_the_job_waits_a_day(archive):
     archive.youtube.add(VIDEO, subtitles=SUBTITLES)
     archived(archive, subtitle_languages=["en"])
     archive.youtube.videos[VIDEO].refused_extras = RATE_LIMIT
@@ -120,13 +127,18 @@ def test_a_refusal_during_the_job_pauses_everything_and_marks_the_job_refused(ar
     gate = archive.gate
     assert gate.paused and gate.cause == "extras" and gate.reason == RATE_LIMIT
     assert gate.refusals == 0
-    assert (job["status"], job["state"], job["waiting_on"]) == ("queued", "waiting", "youtube")
+    # YouTube's limit on subtitles outlasts the pause, so the job asks again a day later.
+    assert (job["status"], job["state"], job["waiting_on"]) == ("queued", "waiting", "refused")
+    tomorrow = datetime.now(UTC) + timedelta(seconds=pace.EXTRAS_RETRY)
+    assert abs(parse_time(job["waits_until"]) - tomorrow) < timedelta(minutes=1)
     assert (job["refusals"], job["attempts"]) == (1, 0)
     assert langs(detail(archive)) == ["en"]
     assert not list((archive.media / ".youhoard" / "incomplete").glob("*/*"))
 
     archive.youtube.videos[VIDEO].refused_extras = None
     resume(archive)
+    assert archive.job(job_id)["waiting_on"] == "refused"
+    assert archive.client.post(f"/api/jobs/{job_id}/run-now").status_code == 200
     assert archive.wait_job(job_id)["result"]["saved"] == ["de"]
 
 
@@ -137,7 +149,7 @@ def test_a_bot_check_while_the_job_reads_the_video_pauses_everything(archive):
     job_id = queue_extras(archive, subtitle_languages=["en", "de"])
     job = archive.wait(lambda: (j := archive.job(job_id))["reason"] == "refused" and j)
     assert archive.gate.paused and archive.gate.cause == "refused" and archive.gate.refusals == 1
-    assert job["waiting_on"] == "youtube"
+    assert job["waiting_on"] == "refused"
 
 
 def test_a_failure_nothing_explains_is_retried_later(archive):
@@ -224,3 +236,36 @@ def test_the_extras_job_waits_out_a_pause_like_a_download(archive):
     pause(archive)
     job = archive.job(queue_extras(archive, subtitle_languages=["en", "de"]))
     assert (job["state"], job["waiting_on"]) == ("waiting", "youtube")
+
+
+def test_the_job_starts_only_once_no_download_is_running_or_ready(archive):
+    archive.youtube.add(EARLIER, subtitles=SUBTITLES)
+    archived(archive, EARLIER, subtitle_languages=["en"])
+    running, ready = hold_queue(archive, queued=1)
+    job_id = queue_extras(archive, EARLIER, subtitle_languages=["en", "de"])
+    claim = archive.app.state.runner._claim
+    assert archive.call(claim, ("check", "scan", "extras")) is None
+    assert archive.job(job_id)["status"] == "queued"
+    queued = archive.jobs(status="queued")
+    assert [job["kind"] for job in queued] == ["download", "extras"]  # it goes after them
+
+    archive.youtube.hold.clear()
+    assert archive.wait_job(job_id)["result"]["saved"] == ["de"]
+    finished = archive.sql(
+        "SELECT max(id) AS id FROM events WHERE event = 'job.completed' AND job_id IN (?, ?)",
+        (running["job_id"], ready["job_id"]),
+    )[0]["id"]
+    started = archive.sql(
+        "SELECT id FROM events WHERE event = 'job.started' AND job_id = ?", (job_id,)
+    )[0]["id"]
+    assert started > finished
+
+
+def test_the_job_keeps_the_rest_between_downloads(archive, monkeypatch):
+    monkeypatch.setattr(pace, "REST", {**pace.REST, "download": (60.0, 60.0)})
+    archive.youtube.add(VIDEO, subtitles=SUBTITLES)
+    archived(archive, subtitle_languages=["en"])
+    assert 55 < archive.gate.rest_left("extras") <= 61
+    job_id = queue_extras(archive, subtitle_languages=["en", "de"])
+    assert archive.call(archive.app.state.runner._claim, ("extras",)) is None
+    assert archive.job(job_id)["status"] == "queued"
