@@ -207,7 +207,7 @@ YouHoard has a single account and is meant for a trusted network: your LAN, a VP
 
 - **One process.** FastAPI serves the API and the Svelte frontend. A job runner inside it handles downloads, subscription checks and library scans, with a scheduler tick every 30 seconds. Run one process, not several workers.
 - **SQLite is the index.** Migrations are numbered SQL files. A video's status (archived, downloading, queued, failed, missing) is derived from durable facts plus its latest job, so there's no second state machine to keep in sync.
-- **yt-dlp is the only door to YouTube** (`app/youtube.py`). Downloads run in two phases: the media must succeed, while subtitles, chat and SponsorBlock are best effort.
+- **yt-dlp is the only door to YouTube** (`app/youtube.py`). Downloads run in two phases: the media must succeed, while subtitles, chat and SponsorBlock are best effort. A refused subtitle or chat pauses YouTube work for an hour, and a job fetches what the video missed afterwards.
 - **Tests use a fake YouTube,** so the suite is fast and offline. That proves the app, not YouTube compatibility; live checks do that.
 
 [DESIGN.md](DESIGN.md) has the details: the data model, subscription policies, the download pipeline and the importer.
@@ -218,7 +218,7 @@ The bar for a useful PR is low and the need is real. Good places to start:
 
 - **Use it and report what breaks.** YouTube changes constantly, so issues about failed downloads, odd channels or strange yt-dlp output are gold.
 - **Try the TubeArchivist import on a real backup.** The dry run writes nothing. Open an issue with anything it misreads.
-- **Pick something from the [roadmap](ROADMAP.md):** full-text search, catching up after an import, a subtitle fill-in job, audio track switching outside Safari, or tagged releases.
+- **Pick something from the [roadmap](ROADMAP.md):** full-text search, catching up after an import, audio track switching outside Safari, or tagged releases.
 - **Read a module and make it smaller.** Simplifications, deletions and clearer names are all welcome.
 
 ### Development setup

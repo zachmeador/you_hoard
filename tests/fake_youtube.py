@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.tracks import (
+    TRANSLATED,
+    Track,
     audio_tracks,
     extra_audio,
     original_language,
@@ -17,6 +19,7 @@ from app.youtube import (
     Cancelled,
     DownloadRequest,
     Entry,
+    Extras,
     Listing,
     NotReady,
     Source,
@@ -82,7 +85,8 @@ class FakeVideo:
     automatic_captions: dict[str, str] = field(default_factory=dict)
     # Languages whose caption download fails, as YouTube's rate limit does.
     failing_subtitles: set[str] = field(default_factory=set)
-    # What YouTube says when it refuses a subtitle or chat that matters, as the adapter reports it.
+    # What YouTube says when it refuses a subtitle or chat that matters, as the adapter reports it:
+    # nothing is saved, and the first request is the one refused.
     refused_extras: str | None = None
     # Audio tracks as language -> language preference; the original ranks highest.
     audio: dict[str, int] = field(default_factory=lambda: {"en": -1})
@@ -177,6 +181,8 @@ class FakeYouTube:
         self.calls: list[tuple] = []
         self.failures: dict[str, Exception] = {}
         self.download_failures: dict[str, Exception] = {}
+        # What reading a video's data raises when an extras job asks for it.
+        self.extras_failures: dict[str, Exception] = {}
         self.source_failure: Exception | None = None
         self.hold = threading.Event()
         self.write_media = True
@@ -295,16 +301,8 @@ class FakeYouTube:
         if len(audio) == 1:
             info["acodec"] = audio[0]["acodec"]
 
-        saved = []
-        for track in plan_subtitles(info, request.subtitle_languages, request.auto_captions):
-            if track.lang in video.failing_subtitles:
-                continue
-            (workdir / f"media.{track.lang}.vtt").write_text(
-                f"WEBVTT\n\n00:00.000 --> 00:01.000\nHi {track.lang}\n"
-            )
-            saved.append(track.as_dict())
-        if wants_chat(info, request.live_chat):
-            (workdir / "media.live_chat.json").write_text("\n".join(video.chat or []) + "\n")
+        tracks = plan_subtitles(info, request.subtitle_languages, request.auto_captions)
+        extras = self.fetch_files(video, workdir, tracks, wants_chat(info, request.live_chat))
         if request.comments:
             info["comments"] = video.comments or [{"id": "c1", "text": "First", "author": "Viewer"}]
         if request.sponsorblock and video.sponsor_segments is not None:
@@ -312,10 +310,54 @@ class FakeYouTube:
                 {"start_time": start, "end_time": end, "category": category, "type": "skip"}
                 for start, end, category in video.sponsor_segments
             ]
-        info["_youhoard"] = {"subtitles": saved}
-        if video.refused_extras:
-            info["_youhoard"]["refused"] = video.refused_extras
+        info["_youhoard"] = {"subtitles": [track.as_dict() for track in extras.saved]}
+        if extras.refused:
+            info["_youhoard"]["refused"] = extras.refused
+        if extras.incomplete:
+            info["_youhoard"]["extras_missing"] = True
         return json.loads(json.dumps(info))
+
+    def fetch_files(self, video: FakeVideo, workdir, tracks: list[Track], chat: bool) -> Extras:
+        """Write the subtitles and chat the way the adapter's extras step does, and report it."""
+        refused = video.refused_extras
+        saved: list[Track] = []
+        chat_saved = False
+        if not refused:
+            for track in tracks:
+                if track.lang in video.failing_subtitles:
+                    continue
+                (workdir / f"media.{track.lang}.vtt").write_text(
+                    f"WEBVTT\n\n00:00.000 --> 00:01.000\nHi {track.lang}\n"
+                )
+                saved.append(track)
+            if chat:
+                (workdir / "media.live_chat.json").write_text("\n".join(video.chat or []) + "\n")
+                chat_saved = True
+        missing = [track for track in tracks if track not in saved]
+        chat_missing = chat and not chat_saved
+        lost = {track.source for track in missing} - {TRANSLATED}
+        return Extras(saved, refused if lost or chat_missing else None, missing, chat_missing)
+
+    async def fetch_extras(
+        self,
+        request: DownloadRequest,
+        have: set[str],
+        have_chat: bool,
+        cancelled: threading.Event,
+    ) -> Extras:
+        self.calls.append(("extras", request, have, have_chat))
+        if request.youtube_id in self.extras_failures:
+            raise self.extras_failures[request.youtube_id]
+        video = self.videos[request.youtube_id]
+        request.workdir.mkdir(parents=True, exist_ok=True)
+        info = video.info()
+        tracks = [
+            track
+            for track in plan_subtitles(info, request.subtitle_languages, request.auto_captions)
+            if track.lang not in have
+        ]
+        chat = wants_chat(info, request.live_chat) and not have_chat
+        return self.fetch_files(video, request.workdir, tracks, chat)
 
     def versions(self) -> dict[str, str | None]:
         return {"yt_dlp": "fake", "js_runtime": "deno 0.0"}

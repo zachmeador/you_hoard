@@ -14,7 +14,7 @@ router = APIRouter()
 # "waiting" is a queued job held back by its own wait or by a pause on YouTube; "queued" is one
 # that can run now.
 Status = Literal[STATES]
-Kind = Literal["download", "check", "scan"]
+Kind = Literal["download", "check", "scan", "extras"]
 MAX_PAUSE_HOURS = 24 * 30
 
 

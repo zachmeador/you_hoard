@@ -460,7 +460,17 @@
               {/each}
             </ul>
           {:else}
-            <p class="note first">None saved</p>
+            <p class="note first">{video.extras_job ? 'None saved yet' : 'None saved'}</p>
+          {/if}
+          {#if video.extras_job}
+            {@const extras = video.extras_job}
+            <p class="note">
+              {#if extras.state === 'running'}Missing tracks: fetching now
+              {:else if extras.state === 'paused'}Missing tracks: paused
+              {:else if extras.state === 'waiting' && extras.waits_until}Missing tracks: after {whenShort(extras.waits_until, clock.now)} ({rel(extras.waits_until, clock.now)})
+              {:else}Missing tracks: queued{/if}
+              · <a class="lnk" href={href('/activity', { job: extras.id })}>History</a>
+            </p>
           {/if}
         </section>
       {/if}

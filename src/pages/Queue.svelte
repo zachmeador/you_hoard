@@ -109,7 +109,7 @@
   /** The tab whose every job "Select all" can pick. */
   const pickTab = $derived(view === 'waiting' || view === 'queued' || view === 'paused' ? view : null)
   const downloads = $derived(queue.running.filter((j) => j.kind === 'download'))
-  const slots = $derived(librarySettings.current?.max_concurrent_downloads ?? 2)
+  const slots = $derived(librarySettings.current?.max_concurrent_downloads ?? 1)
   /** Downloads rest between one another; with every slot busy the rest isn't what holds the next one. */
   const resting = $derived(
     !!queue.downloadRestUntil &&
@@ -336,7 +336,7 @@
   <a class="lnk" href={href('/activity', { job: job.id })}>History</a>
 {/snippet}
 
-{#snippet until()}Downloads, checks and lookups wait until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}){/snippet}
+{#snippet until()}All YouTube work waits until {whenShort(queue.youtubePausedUntil, clock.now)} ({rel(queue.youtubePausedUntil, clock.now)}){/snippet}
 
 {#snippet foot(/** @type {Section} */ section)}
   {#if view}
@@ -365,7 +365,8 @@
         { value: '', label: 'All' },
         { value: 'download', label: 'Downloads' },
         { value: 'check', label: 'Checks' },
-        { value: 'scan', label: 'Scans' }
+        { value: 'scan', label: 'Scans' },
+        { value: 'extras', label: 'Subtitles' }
       ]}
       onchange={(value) => updateQuery({ kind: value })}
     />
@@ -425,11 +426,11 @@
         <q>{cause === 'failures' ? queue.youtubePauseReason : refusalWords(queue.youtubePauseReason)}</q>
       {/if}
       {#if cause === 'refused'}
-        {@render until()}, instead of each one running into it. The wait grows if YouTube keeps refusing.
+        {@render until()}. The wait grows if YouTube keeps refusing.
       {:else if cause === 'extras'}
-        The video came through. {@render until()}, so the next ones don't lose theirs too.
+        The video was saved; its subtitles or chat are fetched after the pause. {@render until()}.
       {:else if cause === 'failures'}
-        {@render until()}, in case YouTube is refusing in words YouHoard doesn't know, or the connection is the trouble. The wait grows if they keep failing.
+        {@render until()}. It may be a refusal YouHoard can't read, or the connection. The wait grows if calls keep failing.
       {:else}
         {@render until()}, as you asked.
       {/if}
@@ -548,7 +549,7 @@
             <td class="c-pos num">{startOf('queued') + i + 1}</td>
             <td class="c-main keep">
               {#if link}<a class="ttl" href={link}>{title}</a>{:else}<span class="ttl">{title}</span>{/if}
-              {#if job.refusals > 0}<div class="why">{refusalCount(job.refusals)}, so it waits behind the others</div>{/if}
+              {#if job.refusals > 0}<div class="why">{refusalCount(job.refusals)}, so it moved back</div>{/if}
               <div class="m-meta">{JOB_KINDS[job.kind]} · added {rel(job.created_at, clock.now)} · {@render historyLink(job)}</div>
             </td>
             <td class="num c-added">{rel(job.created_at, clock.now)}</td>

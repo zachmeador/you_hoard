@@ -348,7 +348,13 @@ def test_a_refused_subtitle_keeps_the_video_and_holds_the_next_one(archive):
     assert "refused" not in sidecar_of(archive, video)["_youhoard"]
     done = archive.job(first["job_id"])
     assert "refused" in done["result"]
-    assert "lost to a refusal" in archive.events(job_id=first["job_id"])[0]["detail"]
+    assert "refused, to be fetched later" in archive.events(job_id=first["job_id"])[0]["detail"]
+    extras = archive.job(done["result"]["extras_job"])
+    assert (extras["kind"], extras["state"], extras["waiting_on"]) == (
+        "extras",
+        "waiting",
+        "youtube",
+    )
 
 
 def test_a_download_with_refused_extras_still_counts_as_a_success(archive):

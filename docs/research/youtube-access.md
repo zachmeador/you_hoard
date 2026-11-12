@@ -74,7 +74,7 @@ For comparison, yt-dlp's `-t sleep` preset waits 0.75 s between requests, 5 s be
 | Error | What happens |
 | --- | --- |
 | `Blocked`: any request YouTube answers with 429, or "sign in to confirm you", "try again later", "too many requests" or "rate-limit" | The call sends YouTube nothing more. All YouTube work waits 1 hour, then 2, 4, 8 and 12 hours while refusals continue (`BLOCK_PAUSES`). The job gets its attempt back and goes behind the jobs YouTube hasn't refused |
-| A refused subtitle or live chat | The remaining tracks aren't asked for. All YouTube work waits one hour (`EXTRAS_PAUSE`), off the ladder. The video is kept and counts as a success |
+| A refused subtitle or live chat | The remaining tracks aren't asked for. All YouTube work waits one hour (`EXTRAS_PAUSE`), off the ladder. The video is kept and counts as a success, and an `extras` job fetches what it missed once the pause is over. That job, if refused again, gets its attempt back and goes behind the others, as a refused download does |
 | Generic `YouTubeError`, including HTTP 403 | That job retries after 15 minutes, 1 hour and 4 hours (`RETRY_DELAYS`), 4 attempts in all. Three in a row of one kind of call (downloads, checks or lookups), each about something different (`FAILURE_STREAK`), pause all YouTube work for 1 hour, then 2, 4, 8 and 12 for each further one until a call of that kind goes through (`FAILURE_PAUSES`). Retries of the same video don't add to the run |
 | HTTP 404 or 410 for a channel or playlist | `Unavailable`: it doesn't exist |
 | `Inaccessible` or `Unavailable` | That job fails at once. `Unavailable` also marks the video as gone from YouTube |
@@ -89,7 +89,7 @@ Fixed since this snapshot:
 
 - Defects 1–4, 6 and 8 are fixed.
 - Defect 5 is fixed: every request a call sends YouTube asks the gate first, so a listing, a transfer or a run of subtitles stops at its next request, and a call waiting its turn doesn't start. A stopped download picks up from what's in its folder.
-- Defect 7 is fixed for the backoff: a refused subtitle or chat pauses for a fixed hour and doesn't reset the ladder. Translated captions are the exception. The lost track itself still needs the fill-in job on the roadmap.
+- Defect 7 is fixed for the backoff: a refused subtitle or chat pauses for a fixed hour and doesn't reset the ladder. Translated captions are the exception. The lost tracks are fetched later by an `extras` job that the download queues.
 - Defect 9 is fixed as far as it can be offline: System says whether the file can be read and holds a signed-in session. Only using it shows whether YouTube accepts it.
 - Defect 10 is fixed for the headline: the Queue page can pause all YouTube work, and switching a subscription off pauses the downloads its policy queued. Switching it back on resumes them. A policy of `none` still runs checks, by design. A check already queued still runs but queues nothing, and concurrency still can't go below 1.
 - Every YouTube call now goes through one gate (`app/gate.py`), which keeps the pause in the database.

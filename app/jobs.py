@@ -56,7 +56,7 @@ STATES = ("queued", "waiting", "paused", "running", "completed", "failed", "canc
 ACTIVE = ("queued", "paused", "running")
 FINISHED = ("completed", "failed", "cancelled")
 # Jobs that talk to YouTube, and so wait out a bot check. job_state applies the same rule.
-YOUTUBE_KINDS = ("download", "check")
+YOUTUBE_KINDS = ("download", "check", "extras")
 # The moves a job's status can make, and nothing else.
 MOVES = {
     "queued": ("paused", "running", "cancelled"),
@@ -182,7 +182,19 @@ def summary(kind: str, result: dict[str, Any]) -> str:
         text = result.get("skipped") or (
             f"{result['height']}p" if result.get("height") else "Archived"
         )
-        return f"{text}; subtitles or chat lost to a refusal" if result.get("refused") else text
+        if result.get("refused"):
+            return f"{text}; subtitles or chat refused, to be fetched later"
+        if result.get("extras_job"):
+            return f"{text}; subtitles or chat to be fetched later"
+        return text
+    if kind == "extras":
+        if result.get("skipped"):
+            return result["skipped"]
+        saved = [*result["saved"], *(["live chat"] if result["chat"] else [])]
+        text = f"Saved {', '.join(saved)}" if saved else "Nothing left to fetch"
+        if result["missing"]:
+            text += f"; {', '.join(result['missing'])} unavailable"
+        return text
     if kind == "check":
         return (
             f"{result['listed']} listed, {result['new_entries']} new, "
@@ -250,14 +262,20 @@ class JobRunner:
             return
         from app.checks import run_check
         from app.downloads import run_download
+        from app.extras import run_extras
         from app.scanner import run_scan
 
-        self.handlers = {"download": run_download, "check": run_check, "scan": run_scan}
+        self.handlers = {
+            "download": run_download,
+            "check": run_check,
+            "scan": run_scan,
+            "extras": run_extras,
+        }
         await self._return_running()
         self._stopping = False
         self._tasks = [
             *(asyncio.create_task(self._download_worker(i)) for i in range(MAX_DOWNLOAD_WORKERS)),
-            asyncio.create_task(self._worker(("check", "scan"))),
+            asyncio.create_task(self._worker(("check", "scan", "extras"))),
             asyncio.create_task(self._scheduler()),
         ]
 

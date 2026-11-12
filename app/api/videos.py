@@ -253,9 +253,23 @@ async def get_video(video_id: int, db: Database = Depends(get_db)):
     entry = None
     if row["deleted_at"] and not row["media_path"]:
         entry = await asyncio.to_thread(trash.latest, row["youtube_id"])
+    extras_job = await db.fetch_one(
+        "SELECT id, state, waiting_on, wait_ends FROM job_state "
+        "WHERE kind = 'extras' AND video_id = ? AND status IN ('queued', 'paused', 'running') "
+        "ORDER BY id DESC LIMIT 1",
+        (video_id,),
+    )
     return {
         **video_out(row),
         **await asyncio.to_thread(video_details, row, media),
+        "extras_job": {
+            "id": extras_job["id"],
+            "state": extras_job["state"],
+            "waiting_on": extras_job["waiting_on"],
+            "waits_until": extras_job["wait_ends"],
+        }
+        if extras_job
+        else None,
         "trash": {"removed_at": entry.removed_at, "expires_at": entry.expires_at}
         if entry
         else None,

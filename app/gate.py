@@ -16,6 +16,7 @@ from app.events import Actor
 from app.youtube import (
     Blocked,
     DownloadRequest,
+    Extras,
     Listing,
     Paused,
     ProgressCallback,
@@ -32,7 +33,12 @@ CAUSES = {
     "failures": ("youtube.failures", "Calls to YouTube keep failing"),
 }
 # The kinds of call whose failures are counted, each run on its own, as a pause names them.
-CALLS = {"download": "downloads", "check": "checks", "lookup": "lookups"}
+CALLS = {
+    "download": "downloads",
+    "check": "checks",
+    "lookup": "lookups",
+    "extras": "subtitle fetches",
+}
 
 
 def stamp(timestamp: float) -> str:
@@ -205,6 +211,21 @@ class YouTubeGate:
         if refused := info["_youhoard"].get("refused"):
             await self.hold(pace.EXTRAS_PAUSE, refused, "app", "extras")
         return info
+
+    async def fetch_extras(
+        self,
+        request: DownloadRequest,
+        have: set[str],
+        have_chat: bool,
+        cancelled: threading.Event,
+    ) -> Extras:
+        """Fetch the subtitles and live chat an archived video lacks. A refused one pauses
+        everything, as it does for a download."""
+        async with self._guarded("extras", request.youtube_id):
+            outcome = await self._youtube.fetch_extras(request, have, have_chat, cancelled)
+        if outcome.refused:
+            await self.hold(pace.EXTRAS_PAUSE, outcome.refused, "app", "extras")
+        return outcome
 
     async def fetch_image(self, url: str) -> bytes:
         """Channel art from YouTube's image CDN. Rare and best-effort, so its failures aren't

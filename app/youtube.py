@@ -420,6 +420,23 @@ class DownloadRequest:
     sponsorblock: bool = False
 
 
+@dataclass
+class Extras:
+    """What fetching subtitles and live chat came to."""
+
+    # The tracks that were saved.
+    saved: list[Track] = field(default_factory=list)
+    # What YouTube said if it refused one that matters; a refused translation doesn't count.
+    refused: str | None = None
+    # The planned tracks that weren't saved, translations included, and whether the chat wasn't.
+    missing: list[Track] = field(default_factory=list)
+    chat_missing: bool = False
+
+    @property
+    def incomplete(self) -> bool:
+        return bool(self.missing or self.chat_missing)
+
+
 ProgressCallback = Callable[[dict[str, Any]], None]
 
 
@@ -648,8 +665,10 @@ class YouTube:
 
         The video and its audio tracks come first and can fail the download. Subtitles, live chat
         and SponsorBlock segments follow on a best-effort basis, so a failure there costs only
-        the extra. The info's `_youhoard.subtitles` lists the tracks that were saved, and
-        `_youhoard.refused` says what YouTube answered if it refused one that matters.
+        the extra. The info's `_youhoard.subtitles` lists the tracks that were saved,
+        `_youhoard.refused` says what YouTube answered if it refused one that matters, and
+        `_youhoard.extras_missing` is set when any planned track or the chat wasn't saved, for
+        whatever reason, so that a later job can fetch it.
         """
 
         def check_cancelled() -> None:
@@ -719,16 +738,15 @@ class YouTube:
 
             if comment_count is not None:
                 info["comment_count"] = comment_count  # yt-dlp replaces it with the number saved
-            saved: list[Track] = []
-            refused = None
+            extras = Extras()
             if tracks or chat:
                 progress({"status": "processing"})
-                saved, refused = self._extras(
-                    call, pristine, request, tracks, chat, check_cancelled
-                )
-            info["_youhoard"] = {"subtitles": [track.as_dict() for track in saved]}
-            if refused:
-                info["_youhoard"]["refused"] = refused
+                extras = self._extras(call, pristine, request, tracks, chat, check_cancelled)
+            info["_youhoard"] = {"subtitles": [track.as_dict() for track in extras.saved]}
+            if extras.refused:
+                info["_youhoard"]["refused"] = extras.refused
+            if extras.incomplete:
+                info["_youhoard"]["extras_missing"] = True
             if request.sponsorblock:
                 check_cancelled()
                 segments = self._segments(call, pristine)
@@ -750,6 +768,40 @@ class YouTube:
             info = ydl.process_ie_result(copy.deepcopy(raw), download=False)
         return info.get("requested_formats") or [info]
 
+    async def fetch_extras(
+        self,
+        request: DownloadRequest,
+        have: set[str],
+        have_chat: bool,
+        cancelled: threading.Event,
+    ) -> Extras:
+        """Fetch the subtitles and live chat the request asks for and `have` doesn't cover, for a
+        video already archived, into request.workdir as media.<lang>.vtt and media.live_chat.json.
+        The job retries on `pace.RETRY_DELAYS`, as downloads do."""
+
+        def check_cancelled() -> None:
+            if cancelled.is_set():
+                raise DownloadCancelled("Cancelled")
+
+        def work(call: Call) -> Extras:
+            request.workdir.mkdir(parents=True, exist_ok=True)
+            with call.ydl(self.options()) as ydl:
+                raw = ydl.extract_info(video_url(request.youtube_id), download=False, process=False)
+            check_cancelled()
+            tracks = [
+                track
+                for track in plan_subtitles(raw, request.subtitle_languages, request.auto_captions)
+                if track.lang not in have
+            ]
+            chat = wants_chat(raw, request.live_chat) and not have_chat
+            pristine = copy.deepcopy(raw)
+            pristine.pop("__post_extractor", None)
+            if not (tracks or chat):
+                return Extras()
+            return self._extras(call, pristine, request, tracks, chat, check_cancelled)
+
+        return await self._run(work, retries=0)
+
     def _extras(
         self,
         call: Call,
@@ -758,10 +810,10 @@ class YouTube:
         tracks: list[Track],
         chat: bool,
         check_cancelled: Callable[[], None],
-    ) -> tuple[list[Track], str | None]:
-        """Fetch subtitles and live chat next to the media. Returns the tracks that were saved,
-        and what YouTube said if it refused one. A refused translation doesn't count: YouTube
-        limits those heavily on their own, so losing one says little about the connection.
+    ) -> Extras:
+        """Fetch subtitles and live chat next to the media. A refused translation doesn't count
+        as a refusal: YouTube limits those heavily on their own, so losing one says little about
+        the connection.
 
         Once YouTube refuses a track, the rest aren't asked for. A pause stops the download, which
         picks up later from the media already in its folder."""
@@ -799,10 +851,11 @@ class YouTube:
         saved = [
             track for track in tracks if (request.workdir / f"media.{track.lang}.vtt").is_file()
         ]
-        lost = {track.source for track in tracks if track not in saved} - {TRANSLATED}
-        lost_chat = chat and not (request.workdir / "media.live_chat.json").is_file()
+        missing = [track for track in tracks if track not in saved]
+        lost = {track.source for track in missing} - {TRANSLATED}
+        chat_missing = chat and not (request.workdir / "media.live_chat.json").is_file()
         refusal = call.refusal or log.refusal
-        return saved, refusal if lost or lost_chat else None
+        return Extras(saved, refusal if lost or chat_missing else None, missing, chat_missing)
 
     def _segments(self, call: Call, raw: dict[str, Any]) -> list[dict[str, Any]] | None:
         """SponsorBlock segments for the video, or None if the lookup failed."""

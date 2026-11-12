@@ -29,7 +29,7 @@ class QueueState {
   byVideo = $derived.by(() => {
     /** @type {Map<number, Job>} */
     const map = new Map()
-    for (const job of this.running) if (job.video) map.set(job.video.id, job)
+    for (const job of this.running) if (job.kind === 'download' && job.video) map.set(job.video.id, job)
     return map
   })
 

@@ -13,7 +13,7 @@ SELECT
     CASE WHEN w.wait_ends IS NOT NULL THEN 'waiting' ELSE w.status END AS state,
     CASE
         WHEN w.wait_ends IS NULL THEN NULL
-        WHEN w.kind IN ('download', 'check')
+        WHEN w.kind IN ('download', 'check', 'extras')
             AND w.wait_ends = (SELECT paused_until FROM youtube_pause) THEN 'youtube'
         ELSE w.reason
     END AS waiting_on
@@ -27,7 +27,7 @@ FROM (
                 ''
             ),
             coalesce(
-                CASE WHEN j.kind IN ('download', 'check') THEN (
+                CASE WHEN j.kind IN ('download', 'check', 'extras') THEN (
                     SELECT paused_until FROM youtube_pause
                     WHERE paused_until > (SELECT strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
                 ) END,

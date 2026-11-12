@@ -119,6 +119,17 @@ export interface VideoDetail extends Video {
   chat_url?: string | null
   /** Set while a removed video's files are in the trash and can be restored. */
   trash?: { removed_at: string; expires_at: string } | null
+  /** The job that will fetch the subtitles or live chat its download missed, while one is queued, paused or running. */
+  extras_job?: ExtrasJob | null
+}
+
+export interface ExtrasJob {
+  id: number
+  state: JobStateName
+  /** Set only while `state` is `waiting`. */
+  waiting_on: WaitingOn | null
+  /** Set only while `state` is `waiting`. */
+  waits_until: string | null
 }
 
 export interface VideoQuery {
@@ -330,7 +341,8 @@ export interface EntryQuery {
   per_page?: number
 }
 
-export type JobKind = 'download' | 'check' | 'scan'
+/** `extras` fetches the subtitles and live chat a download missed. */
+export type JobKind = 'download' | 'check' | 'scan' | 'extras'
 export type JobStatus = 'queued' | 'paused' | 'running' | 'completed' | 'failed' | 'cancelled'
 /**
  * A job's state is its status, except that a queued job is `waiting` while its own wait or a pause on

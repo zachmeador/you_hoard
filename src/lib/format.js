@@ -292,7 +292,7 @@ export const CONTENT_TYPES = { video: 'Videos', short: 'Shorts', live: 'Live' }
 export const KIND_WORDS = { video: 'Video', short: 'Short', live: 'Stream' }
 
 /** @type {Record<JobKind, string>} */
-export const JOB_KINDS = { download: 'Download', check: 'Check', scan: 'Scan' }
+export const JOB_KINDS = { download: 'Download', check: 'Check', scan: 'Scan', extras: 'Subtitles' }
 
 /** @type {Record<string, string>} */
 export const SUBTITLE_SOURCES = {
@@ -381,9 +381,13 @@ export function textParts(text, limit = null) {
   return parts
 }
 
-/** @param {Job} job */
+/**
+ * What a job is about, as its row names it. A download and the extras job that follows it share a
+ * video, so the extras job says what it fetches.
+ * @param {Job} job
+ */
 export function jobItemTitle(job) {
-  if (job.video) return job.video.title
+  if (job.video) return job.kind === 'extras' ? `Subtitles for ${job.video.title}` : job.video.title
   if (job.subscription) return job.subscription.title
   return 'Library rescan'
 }

@@ -13,6 +13,17 @@ from app.options import resolve_options
 from app.youtube import Cancelled, DownloadRequest, Unavailable
 
 
+async def job_options(runner: JobRunner, job: dict[str, Any]) -> dict[str, Any]:
+    """What a download, or the extras job that follows it, is to fetch: the job's own options over
+    those of the subscription it came through, over the library's settings."""
+    subscription = None
+    if job["via_subscription_id"]:
+        subscription = await runner.db.fetch_one(
+            "SELECT * FROM subscriptions WHERE id = ?", (job["via_subscription_id"],)
+        )
+    return resolve_options(loads(job["options"]) or {}, subscription, await runner.settings.all())
+
+
 async def run_download(
     runner: JobRunner, job: dict[str, Any], cancel: threading.Event
 ) -> dict[str, Any]:
@@ -20,14 +31,7 @@ async def run_download(
     video = await db.fetch_one("SELECT * FROM videos WHERE id = ?", (job["video_id"],))
     if video["media_path"]:
         return {"skipped": "Already archived"}
-    subscription = None
-    if job["via_subscription_id"]:
-        subscription = await db.fetch_one(
-            "SELECT * FROM subscriptions WHERE id = ?", (job["via_subscription_id"],)
-        )
-    options = resolve_options(
-        loads(job["options"]) or {}, subscription, await runner.settings.all()
-    )
+    options = await job_options(runner, job)
 
     youtube_id = video["youtube_id"]
     request = DownloadRequest(
@@ -58,8 +62,10 @@ async def run_download(
     progress.update({"status": "processing"})
     facts = archive_facts(info)
     own = info.setdefault("_youhoard", {})
-    # The gate has dealt with the refusal; the job only records that the extras may be missing.
+    # The gate has dealt with the refusal; neither belongs in the sidecar, which keeps what the
+    # file holds. An extras job fetches what is missing.
     refused = own.pop("refused", None)
+    extras_missing = own.pop("extras_missing", False)
     own["audio_languages"] = facts["audio_languages"]
     own["acodec"] = facts["acodec"]
     async with db.transaction() as conn:
@@ -87,6 +93,7 @@ async def run_download(
         return layout.relative(media), media.stat().st_size
 
     media_path, size = await asyncio.to_thread(place)
+    extras_job = None
     async with db.transaction() as conn:
         await record_archived(
             conn,
@@ -98,5 +105,23 @@ async def run_download(
             facts=facts,
         )
         await conn.execute("UPDATE videos SET unavailable_at = NULL WHERE id = ?", (video["id"],))
-    result = {"media_path": media_path, "media_size": size, "height": info.get("height")}
-    return {**result, "refused": refused} if refused else result
+        if extras_missing:
+            extras_job = await runner.enqueue(
+                "extras",
+                video_id=video["id"],
+                origin=job["origin"],
+                actor="app",
+                via_subscription_id=job["via_subscription_id"],
+                options=loads(job["options"]) or {},
+                conn=conn,
+            )
+    result: dict[str, Any] = {
+        "media_path": media_path,
+        "media_size": size,
+        "height": info.get("height"),
+    }
+    if refused:
+        result["refused"] = refused
+    if extras_job:
+        result["extras_job"] = extras_job
+    return result

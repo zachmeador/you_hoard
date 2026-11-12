@@ -184,6 +184,7 @@ def test_media_comes_first_and_everything_else_is_best_effort(stubbed, tmp_path)
     ]
     assert not sponsorblock.processed  # the lookup only reads segments; nothing is processed
     assert {"status": "processing"} in progress
+    assert "extras_missing" not in info["_youhoard"]
 
 
 def test_a_failed_language_is_left_out_not_fatal(stubbed, tmp_path):
@@ -191,6 +192,8 @@ def test_a_failed_language_is_left_out_not_fatal(stubbed, tmp_path):
     info, _ = download(tmp_path)
     assert [track["lang"] for track in info["_youhoard"]["subtitles"]] == ["en"]
     assert info["comment_count"] == 9400
+    assert info["_youhoard"]["extras_missing"] is True  # so a job fetches them later
+    assert "refused" not in info["_youhoard"]
 
 
 def test_a_crashing_extras_pass_still_returns_the_video(stubbed, tmp_path):
@@ -285,3 +288,36 @@ def test_a_refused_piece_ends_the_download_as_a_refusal(stubbed, tmp_path, monke
             YouTube(request_interval=0).download(request, lambda _: None, threading.Event())
         )
     assert Stub.requests[-1].endswith("piece=1")  # not the third piece, nor a subtitle
+
+
+def fetch_extras(tmp_path: Path, have: set[str], have_chat: bool):
+    request = DownloadRequest(
+        youtube_id="dQw4w9WgXcQ",
+        workdir=tmp_path / "extras",
+        quality=None,
+        subtitle_languages=["en", "es", "de"],
+        comments=False,
+        live_chat=True,
+    )
+    return asyncio.run(
+        YouTube(request_interval=0).fetch_extras(request, have, have_chat, threading.Event())
+    )
+
+
+def test_fetching_extras_later_asks_only_for_what_the_media_lacks(stubbed, tmp_path):
+    extras = fetch_extras(tmp_path, {"en"}, False)
+    extractor, fetcher = Stub.instances
+    assert "writesubtitles" not in extractor.params and "getcomments" not in extractor.params
+    assert fetcher.params["subtitleslangs"] == ["de", "es", "live_chat"]
+    assert fetcher.params["skip_download"] is True
+    assert "__post_extractor" not in fetcher.processed[0]
+    assert [track.lang for track in extras.saved] == ["de", "es"]
+    assert not extras.incomplete and extras.refused is None
+    assert (tmp_path / "extras" / "media.live_chat.json").exists()
+    assert not [url for url in Stub.requests if "googlevideo" in url]  # no media this time
+
+
+def test_fetching_extras_with_nothing_missing_only_reads_the_video(stubbed, tmp_path):
+    extras = fetch_extras(tmp_path, {"en", "es", "de"}, True)
+    assert len(Stub.instances) == 1 and not Stub.requests
+    assert extras.saved == [] and not extras.incomplete

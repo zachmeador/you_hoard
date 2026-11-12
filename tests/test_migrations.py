@@ -516,3 +516,121 @@ def test_the_app_starts_on_a_stalled_database_and_says_what_waits_and_why(
         ]
         assert events[:10].count("job.failed") == 6
         assert events[10:13] == ["app.started", "job.returned", "job.resumed"]
+
+
+def version_six(path: Path) -> sqlite3.Connection:
+    """A database as the last release left it, before extras jobs."""
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    for name in sorted(MIGRATIONS.glob("00[1-6]_*.sql")):
+        conn.executescript(name.read_text())
+    conn.execute("PRAGMA user_version = 6")
+    return conn
+
+
+def finished_download(conn, video: int, result: dict, **fields) -> int:
+    columns = {
+        "kind": "download",
+        "video_id": video,
+        "status": "completed",
+        "origin": "user",
+        "result": json.dumps(result),
+        **fields,
+    }
+    cursor = conn.execute(
+        f"INSERT INTO jobs ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+        tuple(columns.values()),
+    )
+    return cursor.lastrowid
+
+
+def test_the_rebuilt_jobs_table_keeps_its_rows_and_never_reuses_an_id(tmp_path: Path):
+    conn = version_six(tmp_path / "six.db")
+    for number in range(1, 5):
+        conn.execute(
+            "INSERT INTO videos (youtube_id, title) VALUES (?, 'x')", (f"video{number:06d}",)
+        )
+        finished_download(conn, number, {"height": 720})
+    conn.execute("DELETE FROM jobs WHERE id IN (3, 4)")  # Clear finished took the newest
+    conn.commit()
+    conn.close()
+
+    asyncio.run(Database(tmp_path / "six.db").migrate())
+
+    with sqlite3.connect(tmp_path / "six.db") as conn:
+        assert column(conn, "SELECT id FROM jobs ORDER BY id") == [1, 2]
+        conn.execute("INSERT INTO jobs (kind, video_id, origin) VALUES ('extras', 1, 'user')")
+        assert column(conn, "SELECT max(id) FROM jobs") == [5]
+        assert column(conn, "SELECT seq FROM sqlite_sequence WHERE name = 'jobs'") == [5]
+        with pytest.raises(sqlite3.IntegrityError):  # one active extras job per video
+            conn.execute("INSERT INTO jobs (kind, video_id, origin) VALUES ('extras', 1, 'user')")
+        with pytest.raises(sqlite3.IntegrityError):  # and it belongs to a video
+            conn.execute("INSERT INTO jobs (kind, origin) VALUES ('extras', 'user')")
+        assert column(conn, "SELECT name FROM sqlite_master WHERE name = 'jobs_one_active_extras'")
+        assert column(conn, "SELECT count(*) FROM sqlite_sequence WHERE name = 'jobs_new'") == [0]
+
+
+def test_an_empty_jobs_table_keeps_its_sequence_too(tmp_path: Path):
+    conn = version_six(tmp_path / "six.db")
+    conn.execute("INSERT INTO videos (youtube_id, title) VALUES ('video000001', 'x')")
+    finished_download(conn, 1, {})
+    conn.execute("DELETE FROM jobs")
+    conn.commit()
+    conn.close()
+    asyncio.run(Database(tmp_path / "six.db").migrate())
+    with sqlite3.connect(tmp_path / "six.db") as conn:
+        conn.execute("INSERT INTO jobs (kind, video_id, origin) VALUES ('extras', 1, 'user')")
+        assert column(conn, "SELECT max(id) FROM jobs") == [2]
+
+
+def test_videos_that_lost_subtitles_to_a_refusal_get_an_extras_job_each(tmp_path: Path):
+    path = tmp_path / "six.db"
+    conn = version_six(path)
+    conn.execute("INSERT INTO channels (youtube_id, name) VALUES ('UCold', 'Old channel')")
+    conn.execute(
+        "INSERT INTO subscriptions (id, kind, youtube_id, title, channel_id) "
+        "VALUES (1, 'channel', 'UCold', 'Old channel', 1)"
+    )
+    for number in range(1, 7):
+        conn.execute(
+            "INSERT INTO videos (youtube_id, title, media_path) VALUES (?, 'x', ?)",
+            (f"video{number:06d}", f"old/{number}.mp4"),
+        )
+    conn.execute("UPDATE videos SET media_path = NULL WHERE id = 5")  # deleted since
+    conn.execute("UPDATE videos SET deleted_at = 'then', media_path = 'old/6.mp4' WHERE id = 6")
+    refused = {"height": 720, "refused": "HTTP Error 429"}
+    options = json.dumps({"subtitle_languages": ["en", "de"]})
+    kept = finished_download(
+        conn, 1, refused, origin="policy", via_subscription_id=1, options=options
+    )
+    finished_download(conn, 2, {"height": 720})  # nothing was lost
+    finished_download(conn, 3, refused, origin="user")  # downloaded twice; the latest was refused
+    finished_download(conn, 3, refused, origin="user")
+    finished_download(conn, 4, refused, status="failed")  # never completed
+    finished_download(conn, 5, refused)
+    finished_download(conn, 6, refused)
+    conn.commit()
+    conn.close()
+
+    asyncio.run(Database(path).migrate())
+
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        jobs = conn.execute("SELECT * FROM jobs WHERE kind = 'extras' ORDER BY id").fetchall()
+        assert [job["video_id"] for job in jobs] == [1, 3]
+        first = jobs[0]
+        assert (first["origin"], first["via_subscription_id"], first["priority"]) == (
+            "policy",
+            1,
+            0,
+        )
+        assert (first["status"], first["options"]) == ("queued", options)
+        events = conn.execute(
+            "SELECT event, actor, job_id, job_kind, video_id, subscription_id, detail "
+            "FROM events WHERE job_kind = 'extras' ORDER BY id"
+        ).fetchall()
+        assert [(e["event"], e["actor"], e["job_id"], e["video_id"]) for e in events] == [
+            ("job.queued", "app", job["id"], job["video_id"]) for job in jobs
+        ]
+        assert events[0]["subscription_id"] == 1 and "origin policy" in events[0]["detail"]
+        assert kept < first["id"]

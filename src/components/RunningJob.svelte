@@ -62,6 +62,8 @@
     <div style="min-width: 0">
       {#if job.subscription}
         <a class="ttl" href={href(`/subscriptions/${job.subscription.id}`)}>Checking {job.subscription.title}</a>
+      {:else if job.video}
+        <a class="ttl" href={href(`/video/${job.video.id}`)}>{title}</a>
       {:else}
         <span class="ttl">Library rescan</span>
       {/if}
@@ -70,7 +72,7 @@
     </div>
     <div class="acts">
       <a class="btn sm quiet" href={activity} aria-label="History of {title}" title="History"><Icon name="activity" /></a>
-      <button type="button" class="btn sm" aria-label="Cancel {job.subscription ? `check of ${job.subscription.title}` : 'rescan'}" onclick={oncancel}>
+      <button type="button" class="btn sm" aria-label="Cancel {job.subscription ? `check of ${job.subscription.title}` : job.video ? title : 'rescan'}" onclick={oncancel}>
         <Icon name="x" />Cancel
       </button>
     </div>

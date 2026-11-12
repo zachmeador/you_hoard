@@ -52,7 +52,7 @@ const times = (n) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`)
  * How many times YouTube has refused a job.
  * @param {number} refusals
  */
-export const refusalCount = (refusals) => `YouTube has refused it ${times(refusals)}`
+export const refusalCount = (refusals) => `Refused ${times(refusals)}`
 
 /**
  * Why a waiting job hasn't started. Never empty.
@@ -61,9 +61,7 @@ export const refusalCount = (refusals) => `YouTube has refused it ${times(refusa
 export function waitingWhy(job) {
   switch (job.waiting_on) {
     case 'youtube':
-      return job.refusals
-        ? `Held by the pause on YouTube work · ${refusalCount(job.refusals)}`
-        : 'Held by the pause on YouTube work'
+      return job.refusals ? `YouTube work paused · refused ${times(job.refusals)}` : 'YouTube work paused'
     case 'retry':
       return `Attempt ${job.attempts + 1} of ${job.max_attempts}${job.error ? ` after ${refusalWords(job.error)}` : ''}`
     case 'premiere':
@@ -131,9 +129,27 @@ export function jobResult(job) {
     return `${int(num('files'))} files · ${int(num('added'))} added · ${int(num('missing'))} missing · ${int(num('relinked'))} moved`
   }
   if (typeof result.skipped === 'string') return result.skipped
+  if (job.kind === 'extras') return extrasResult(result)
   const height = num('height')
   const size = num('media_size')
-  return [height ? `${height}p` : '', size != null ? bytes(size) : ''].filter(Boolean).join(' · ')
+  const later = typeof result.extras_job === 'number' ? 'subtitles to follow' : ''
+  return [height ? `${height}p` : '', size != null ? bytes(size) : '', later].filter(Boolean).join(' · ')
+}
+
+/**
+ * What a finished extras job saved, by language code.
+ * @param {Record<string, unknown>} result
+ */
+function extrasResult(result) {
+  /** @param {unknown} value */
+  const codes = (value) => (Array.isArray(value) ? value.filter((code) => typeof code === 'string') : [])
+  const saved = codes(result.saved)
+  const missing = codes(result.missing)
+  const bits = []
+  if (saved.length) bits.push(`Saved ${saved.join(', ')}`)
+  if (result.chat === true) bits.push('Saved the live chat')
+  if (missing.length) bits.push(`${missing.join(', ')} unavailable`)
+  return bits.join(' · ') || 'Nothing left to fetch'
 }
 
 /** Seconds a finished job ran for. @param {Job} job */

@@ -189,6 +189,7 @@ def test_a_refused_extra_and_a_run_of_failures_are_recorded_as_the_apps(archive)
     kept = IDS[0]
     archive.youtube.add(kept, refused_extras=RATE_LIMIT)
     archive.wait_job(add(archive, kept)["job_id"])
+    archive.youtube.videos[kept].refused_extras = None  # the job that fetches them can succeed
     refused = latest(archive, "youtube.extras_refused")
     assert (refused["actor"], refused["job_id"]) == ("app", None)
     assert RATE_LIMIT in refused["detail"] and "waits 60 minutes" in refused["detail"]

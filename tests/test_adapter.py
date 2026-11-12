@@ -24,6 +24,7 @@ from app.youtube import (
     Blocked,
     Call,
     DownloadRequest,
+    Extras,
     Paused,
     Unavailable,
     YouTube,
@@ -279,8 +280,8 @@ def fetch_extras(
     captions: Captions,
     *wanted: tuple[str, str, str],
     before_request: Callable[[], None] = lambda: None,
-) -> tuple[list[str], str | None]:
-    """Run the real extras step over (language, source, path); returns saved tracks, refusal."""
+) -> Extras:
+    """Run the real extras step over (language, source, path)."""
     raw = raw_info([fmt("18", "mp4", vcodec="avc1.42001E", acodec="mp4a.40.2")])
     raw["subtitles"], raw["automatic_captions"] = {}, {}
     for lang, source, path in wanted:
@@ -289,35 +290,36 @@ def fetch_extras(
     tracks = [Track(lang, lang, source) for lang, source, _ in wanted]
     request = DownloadRequest("dQw4w9WgXcQ", workdir, None, [], False)
     call = Call(before_request)
-    saved, refused = YouTube()._extras(call, raw, request, tracks, False, lambda: None)
-    return [track.lang for track in saved], refused
+    return YouTube()._extras(call, raw, request, tracks, False, lambda: None)
+
+
+def langs(tracks: list[Track]) -> list[str]:
+    return [track.lang for track in tracks]
 
 
 @pytest.mark.parametrize("source", [UPLOADED, AUTO])
 def test_a_refused_subtitle_keeps_the_rest_and_says_what_youtube_answered(
     tmp_path, captions, source
 ):
-    saved, refused = fetch_extras(
-        tmp_path, captions, ("en", UPLOADED, "/ok"), ("de", source, "/limited")
-    )
-    assert saved == ["en"]
-    assert refused and "HTTP Error 429" in refused
+    extras = fetch_extras(tmp_path, captions, ("en", UPLOADED, "/ok"), ("de", source, "/limited"))
+    assert langs(extras.saved) == ["en"] and langs(extras.missing) == ["de"]
+    assert extras.refused and "HTTP Error 429" in extras.refused
+    assert extras.incomplete
 
 
 def test_a_refused_translation_is_only_a_lost_track(tmp_path, captions):
-    saved, refused = fetch_extras(
+    extras = fetch_extras(
         tmp_path, captions, ("de", TRANSLATED, "/limited?tlang=de"), ("en", UPLOADED, "/ok")
     )
-    assert (saved, refused) == (["en"], None)
+    assert (langs(extras.saved), extras.refused) == (["en"], None)
+    assert langs(extras.missing) == ["de"]  # still missing, so a job may try it again
     assert captions.asked == ["/limited", "/ok"]  # it didn't stop the tracks after it
 
 
 def test_once_youtube_refuses_a_track_the_rest_are_not_asked_for(tmp_path, captions):
-    saved, refused = fetch_extras(
-        tmp_path, captions, ("de", UPLOADED, "/limited"), ("en", UPLOADED, "/ok")
-    )
-    assert saved == []
-    assert refused == "HTTP Error 429: Too Many Requests from 127.0.0.1"
+    extras = fetch_extras(tmp_path, captions, ("de", UPLOADED, "/limited"), ("en", UPLOADED, "/ok"))
+    assert extras.saved == [] and langs(extras.missing) == ["de", "en"]
+    assert extras.refused == "HTTP Error 429: Too Many Requests from 127.0.0.1"
     assert captions.asked == ["/limited"]
 
 
@@ -347,12 +349,14 @@ def test_requests_elsewhere_pass_whatever_the_gate_says(tmp_path, captions, monk
     def paused() -> None:
         raise Paused("2999-01-01T00:00:00Z")
 
-    saved, _ = fetch_extras(tmp_path, captions, ("en", UPLOADED, "/ok"), before_request=paused)
-    assert saved == ["en"] and captions.asked == ["/ok"]
+    extras = fetch_extras(tmp_path, captions, ("en", UPLOADED, "/ok"), before_request=paused)
+    assert langs(extras.saved) == ["en"] and captions.asked == ["/ok"]
 
 
 def test_a_track_that_fails_for_another_reason_is_not_a_refusal(tmp_path, captions):
-    assert fetch_extras(tmp_path, captions, ("de", UPLOADED, "/missing")) == ([], None)
+    extras = fetch_extras(tmp_path, captions, ("de", UPLOADED, "/missing"))
+    assert extras.saved == [] and extras.refused is None
+    assert langs(extras.missing) == ["de"]
 
 
 def cookie_file(path: Path, *lines: str) -> Path:
